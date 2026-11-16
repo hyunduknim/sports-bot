@@ -1,6 +1,7 @@
 import os
 import re
 import html
+import time
 import datetime
 import pytz
 import requests
@@ -139,24 +140,26 @@ def build_prompt(slot: str, date_str: str, live_data: str) -> str:
 
 
 def generate_analysis_text(prompt: str) -> str:
-    client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=180000))
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.3,
-                max_output_tokens=2048,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            ),
-        )
-    except Exception:
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=2048),
-        )
-    return response.text or "분석 결과를 생성하지 못했습니다."
+    client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=60000))
+    models_to_try = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
+    last_err = None
+
+    for model_name in models_to_try:
+        try:
+            print(f"Trying model: {model_name}...", flush=True)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=2048),
+            )
+            if response and response.text:
+                return response.text
+        except Exception as e:
+            print(f"Model {model_name} failed: {e}", flush=True)
+            last_err = e
+            time.sleep(2)
+
+    raise RuntimeError(f"All models failed. Last error: {last_err}")
 
 
 def send_telegram_message(text: str) -> None:
@@ -179,7 +182,7 @@ def main():
     live_data = collect_live_context(slot, now_kst)
     print(f"[2/4] Collected data length: {len(live_data)}", flush=True)
     prompt = build_prompt(slot, date_str, live_data)
-    print("[3/4] Calling Gemini 3.8 Flash...", flush=True)
+    print("[3/4] Calling Gemini...", flush=True)
     report_text = generate_analysis_text(prompt)
     print(f"[4/4] Generated length: {len(report_text)}, sending to Telegram...", flush=True)
     send_telegram_message(report_text)
