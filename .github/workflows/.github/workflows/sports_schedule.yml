@@ -1,7 +1,6 @@
 name: Hyunduk Sports Scheduled Telegram Bot
 
 on:
-  # 수동 테스트 실행 버튼 활성화
   workflow_dispatch:
     inputs:
       slot:
@@ -9,17 +8,11 @@ on:
         required: true
         default: '07_nba_nhl'
 
-  # 한국시간(KST = UTC+9) 기준 자동 실행 스케줄
   schedule:
-    # 1. 매일 아침 07:00 KST (22:00 UTC) - NBA · NHL 고퀄리티 예약분석
     - cron: '0 22 * * *'
-    # 2. 평일(월~금) 낮 17:00 KST (08:00 UTC, 월~금) - 국내경기 + 아시아축구(J리그/K리그/ACL)
     - cron: '0 8 * * 1-5'
-    # 3. 평일(월~금) 새벽 01:00 KST (16:00 UTC, 일~목) - 해외축구 (~05:50 KST 경기)
     - cron: '0 16 * * 0-4'
-    # 4. 주말(토·일) 낮 13:00 KST (04:00 UTC, 토·일) - 주말 국내경기 + 아시아축구
     - cron: '0 4 * * 6,0'
-    # 5. 주말(토·일) 밤 20:00 KST (11:00 UTC, 토·일) - 주말 해외축구리그 통합 (~익일 05:30 KST)
     - cron: '0 11 * * 6,0'
 
 jobs:
@@ -41,7 +34,7 @@ jobs:
       - name: Run Scheduled Sports Analyzer & Send to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '9112315353' }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           MANUAL_SLOT: ${{ github.event.inputs.slot }}
         run: |
