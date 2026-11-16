@@ -199,10 +199,10 @@ def collect_live_context(slot: str, now_kst: datetime.datetime) -> str:
 def build_prompt(slot: str, date_str: str, live_data: str) -> str:
     common_style_rules = (
         "1) 텔레그램 메시지용이므로 **, *, ###, --- 같은 마크다운 기호는 절대 쓰지 말고 깔끔한 줄바꿈과 이모지(🌿, 🏀, 🏒, ⚽, 📌)로만 작성해 줘.\n"
-        "2) 모든 팀명은 반드시 한국어 풀네임으로 적고 (홈) / (원정)을 꼭 표시해 줘. 빨간색(🔴, 🟥) 이모지는 절대 쓰지 마.\n"
+        "2) 모든 팀명은 반드시 한국어 풀네임(예: 휴스턴 로키츠, 마이애미 히트)으로 적고 (홈) / (원정)을 꼭 표시해 줘. 영어 문장이나 빨간색(🔴, 🟥) 이모지는 절대 쓰지 마.\n"
         "3) 절대로 1줄 요약으로 대충 넘기지 말고, 경기마다 아래 양식대로 상세한 분석 이유를 꼭 작성해 줘:\n"
-        "   [종목 | 한국시간] 홈팀(홈) vs 원정팀(원정) (기준점/배당)\n"
-        "   • 전력/기세 분석: 양 팀 시즌 성적, 홈/원정 유불리, 최근 흐름, 부상자·골리·백투백 체력 변수와 배당 흐름을 3~4문장으로 디테일하게 설명\n"
+        "   [종목 | 한국시간] 홈팀(홈) vs 원정팀(원정) | 기준점/배당\n"
+        "   • 분석 근거: 양 팀 시즌 성적, 홈/원정 유불리, 최근 기세, 부상자·골리·백투백 체력 변수와 배당 흐름을 3~4문장으로 디테일하게 설명\n"
         "   🌿 최종 추천픽: (일반승·핸디캡·언오버를 모두 종합해서 가장 확률과 밸류가 높은 딱 1개만 선정)\n"
         "4) 맨 마지막에는 전체 경기 중 가장 안정적인 2폴더 최적 조합 1~2개만 깔끔하게 정리해 줘.\n"
         "5) 아래 [실시간 수집 데이터]에 없는 경기는 절대 지어내지 마."
@@ -242,7 +242,12 @@ def clean_telegram_text(text: str) -> str:
 
 def generate_analysis_text(prompt: str) -> str:
     client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=90000))
-    models_to_try = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
+    models_to_try = ["gemini-3.8-flash", "gemini-4-hydrogen", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
+    sys_inst = (
+        "당신은 한국인 스포츠 베팅 전문 애널리스트입니다. "
+        "반드시 100% 한국어로만 작성하고 영어 문장이나 영어 약어 팀명(HOU, MIA 등)을 절대 쓰지 마세요. "
+        "마크다운 기호(*, **, #)와 빨간색 이모지(🔴, 🟥)를 절대 사용하지 마세요."
+    )
     last_err = None
 
     for model_name in models_to_try:
@@ -251,7 +256,11 @@ def generate_analysis_text(prompt: str) -> str:
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=8192),
+                config=types.GenerateContentConfig(
+                    system_instruction=sys_inst,
+                    temperature=0.3,
+                    max_output_tokens=8192,
+                ),
             )
             if response and response.text:
                 return clean_telegram_text(response.text)
