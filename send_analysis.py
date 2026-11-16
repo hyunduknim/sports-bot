@@ -5,16 +5,16 @@ import requests
 from google import genai
 from google.genai import types
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "9112315353")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip().strip('"').strip("'")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "9112315353").strip()
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
 MANUAL_SLOT = os.environ.get("MANUAL_SLOT", "").strip()
 
 
 def detect_current_slot(now_kst: datetime.datetime) -> str:
     if MANUAL_SLOT:
         return MANUAL_SLOT
-    weekday = now_kst.weekday()  # 0=월 ... 4=금, 5=토, 6=일
+    weekday = now_kst.weekday()
     hour = now_kst.hour
     is_weekend = weekday in (5, 6)
 
@@ -34,10 +34,9 @@ def detect_current_slot(now_kst: datetime.datetime) -> str:
 def build_prompt(slot: str, date_str: str) -> str:
     common_style_rules = (
         "반드시 눈이 피로한 빨간색(🔴, 🟥) 이모지나 원색 강조를 절대 사용하지 말고, "
-        "눈이 편안한 스타일(🌿 주력 추천픽, 💧 언오버/서브 추천픽, ⭐ 고배당 밸류픽, 굵은 글씨 강조)로만 작성해 줘. "
+        "눈이 편안한 스타일(🌿 주력 추천픽, 💧 언오버/서브 추천픽, ⭐ 고배당 밸류픽)로만 작성해 줘. "
         "단순 일반승 나열이 아니라 핸디캡(마핸/프핸 기준점)과 언오버(기준점)를 반드시 포함해 가장 밸류 높은 라인과 최적 2~3폴더 조합을 제시해 줘."
     )
-
     if slot == "07_nba_nhl":
         return (
             f"[{date_str} 아침 07:00 NBA · NHL 고퀄리티 예약분석]\n"
@@ -72,6 +71,7 @@ def build_prompt(slot: str, date_str: str) -> str:
 
 
 def generate_analysis_text(prompt: str) -> str:
+    print(f"DEBUG KEY CHECK -> len:{len(GEMINI_API_KEY)}, prefix:{GEMINI_API_KEY[:4]}", flush=True)
     client = genai.Client(api_key=GEMINI_API_KEY)
     response = client.models.generate_content(
         model="gemini-2.5-flash",
@@ -86,14 +86,10 @@ def generate_analysis_text(prompt: str) -> str:
 
 def send_telegram_message(text: str) -> None:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    # 텔레그램 메시지 4096자 제한 대응 분할 전송
     max_len = 3900
     chunks = [text[i:i + max_len] for i in range(0, len(text), max_len)]
     for chunk in chunks:
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": chunk,
-        }
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": chunk}
         resp = requests.post(url, json=payload, timeout=30)
         resp.raise_for_status()
 
