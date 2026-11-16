@@ -207,7 +207,7 @@ def build_prompt(slot: str, date_str: str, live_data: str) -> str:
 
 def generate_analysis_text(prompt: str) -> str:
     client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=60000))
-    models_to_try = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
+    models_to_try = ["gemini-4-hydrogen","gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
     last_err = None
 
     for model_name in models_to_try:
