@@ -33,7 +33,7 @@ def detect_current_slot(now_kst: datetime.datetime) -> str:
         return "01_overseas_soccer"
     if is_weekend and 18 <= hour <= 22:
         return "20_weekend_soccer"
-    return "07_nba_nhl"
+    return "all_sports"
 
 
 def fetch_espn_scoreboard(sport_path: str, dates_str: str) -> list:
@@ -99,56 +99,76 @@ def fetch_wisetoto_text() -> str:
         return ""
 
 
+def collect_nba_nhl(yesterday_ymd: str, today_ymd: str) -> list:
+    out = []
+    nba = fetch_espn_scoreboard("basketball/nba", yesterday_ymd) + fetch_espn_scoreboard("basketball/nba", today_ymd)
+    nhl = fetch_espn_scoreboard("hockey/nhl", yesterday_ymd) + fetch_espn_scoreboard("hockey/nhl", today_ymd)
+    out.append("[NBA 공식 일정/배당]\n" + ("\n".join(nba) if nba else "조회된 경기 없음"))
+    out.append("[NHL 공식 일정/배당]\n" + ("\n".join(nhl) if nhl else "조회된 경기 없음"))
+    return out
+
+
+def collect_domestic(yesterday_ymd: str, today_ymd: str, date_ko: str) -> list:
+    out = []
+    asia_leagues = [
+        ("K리그1", "soccer/kor.1"),
+        ("J리그", "soccer/jpn.1"),
+        ("AFC챔피언스리그", "soccer/afc.champions"),
+    ]
+    for label, path in asia_leagues:
+        games = fetch_espn_scoreboard(path, yesterday_ymd) + fetch_espn_scoreboard(path, today_ymd)
+        if games:
+            out.append(f"[{label} 공식 일정]\n" + "\n".join(games))
+
+    news_kbl = fetch_google_news_rss(f"{date_ko} 프로농구 KBL WKBL V리그 경기 일정 프리뷰")
+    news_proto = fetch_google_news_rss(f"프로토 승부식 {date_ko} KBL WKBL 배당")
+    if news_kbl:
+        out.append(f"[{date_ko} 국내경기 뉴스/일정]\n{news_kbl}")
+    if news_proto:
+        out.append(f"[프로토 관련 소식]\n{news_proto}")
+
+    wt = fetch_wisetoto_text()
+    if len(wt) > 200:
+        out.append(f"[와이즈토토 프로토 배당판]\n{wt}")
+    return out
+
+
+def collect_overseas_soccer(yesterday_ymd: str, today_ymd: str) -> list:
+    out = []
+    leagues = [
+        ("EPL", "soccer/eng.1"),
+        ("라리가", "soccer/esp.1"),
+        ("분데스리가", "soccer/ger.1"),
+        ("세리에A", "soccer/ita.1"),
+        ("리그1", "soccer/fra.1"),
+        ("챔피언스리그", "soccer/uefa.champions"),
+        ("유로파리그", "soccer/uefa.europa"),
+        ("네이션스리그", "soccer/uefa.nations"),
+    ]
+    for label, path in leagues:
+        games = fetch_espn_scoreboard(path, yesterday_ymd) + fetch_espn_scoreboard(path, today_ymd)
+        if games:
+            out.append(f"[{label}]\n" + "\n".join(games))
+    return out
+
+
 def collect_live_context(slot: str, now_kst: datetime.datetime) -> str:
     today_ymd = now_kst.strftime("%Y%m%d")
     yesterday_ymd = (now_kst - datetime.timedelta(days=1)).strftime("%Y%m%d")
     date_ko = f"{now_kst.month}월 {now_kst.day}일"
-    sections = []
 
     if slot == "07_nba_nhl":
-        nba = fetch_espn_scoreboard("basketball/nba", yesterday_ymd) + fetch_espn_scoreboard("basketball/nba", today_ymd)
-        nhl = fetch_espn_scoreboard("hockey/nhl", yesterday_ymd) + fetch_espn_scoreboard("hockey/nhl", today_ymd)
-        sections.append("[NBA 공식 일정/배당]\n" + ("\n".join(nba) if nba else "조회된 경기 없음"))
-        sections.append("[NHL 공식 일정/배당]\n" + ("\n".join(nhl) if nhl else "조회된 경기 없음"))
+        sections = collect_nba_nhl(yesterday_ymd, today_ymd)
     elif slot in ("17_domestic", "13_weekend_domestic"):
-        asia_leagues = [
-            ("K리그1", "soccer/kor.1"),
-            ("J리그", "soccer/jpn.1"),
-            ("AFC챔피언스리그", "soccer/afc.champions"),
-        ]
-        for label, path in asia_leagues:
-            games = fetch_espn_scoreboard(path, yesterday_ymd) + fetch_espn_scoreboard(path, today_ymd)
-            if games:
-                sections.append(f"[{label} 공식 일정]\n" + "\n".join(games))
-
-        news_kbl = fetch_google_news_rss(f"{date_ko} 프로농구 KBL WKBL V리그 경기 일정 프리뷰")
-        news_proto = fetch_google_news_rss(f"프로토 승부식 {date_ko} KBL WKBL 배당")
-        if news_kbl:
-            sections.append(f"[{date_ko} 국내경기 뉴스/일정]\n{news_kbl}")
-        if news_proto:
-            sections.append(f"[프로토 관련 소식]\n{news_proto}")
-
-        wt = fetch_wisetoto_text()
-        if len(wt) > 200:
-            sections.append(f"[와이즈토토 프로토 배당판]\n{wt}")
+        sections = collect_domestic(yesterday_ymd, today_ymd, date_ko)
+    elif slot in ("01_overseas_soccer", "20_weekend_soccer"):
+        sections = collect_overseas_soccer(yesterday_ymd, today_ymd)
     else:
-        leagues = [
-            ("EPL", "soccer/eng.1"),
-            ("라리가", "soccer/esp.1"),
-            ("분데스리가", "soccer/ger.1"),
-            ("세리에A", "soccer/ita.1"),
-            ("리그1", "soccer/fra.1"),
-            ("챔피언스리그", "soccer/uefa.champions"),
-            ("유로파리그", "soccer/uefa.europa"),
-            ("네이션스리그", "soccer/uefa.nations"),
-        ]
-        for label, path in leagues:
-            games = fetch_espn_scoreboard(path, yesterday_ymd) + fetch_espn_scoreboard(path, today_ymd)
-            if games:
-                sections.append(f"[{label}]\n" + "\n".join(games))
-        wt = fetch_wisetoto_text()
-        if len(wt) > 200:
-            sections.append(f"[와이즈토토 프로토 참고]\n{wt[:1500]}")
+        sections = (
+            collect_overseas_soccer(yesterday_ymd, today_ymd)
+            + collect_nba_nhl(yesterday_ymd, today_ymd)
+            + collect_domestic(yesterday_ymd, today_ymd, date_ko)
+        )
 
     return "\n\n".join(sections) if sections else "수집된 경기 데이터가 없습니다."
 
@@ -158,25 +178,28 @@ def build_prompt(slot: str, date_str: str, live_data: str) -> str:
         "반드시 눈이 피로한 빨간색(🔴, 🟥) 이모지나 원색 강조를 절대 사용하지 말고, "
         "눈이 편안한 스타일(🌿 주력 추천픽, 💧 언오버/서브 추천픽, ⭐ 고배당 밸류픽)로만 작성해 줘. "
         "단순 일반승 나열이 아니라 핸디캡(마핸/프핸 기준점)과 언오버(기준점)를 반드시 포함해 가장 밸류 높은 라인과 최적 2~3폴더 조합을 제시해 줘. "
-        "아래 [실시간 수집 데이터]에 없는 경기는 절대 지어내지 말고, 확인된 경기만 분석해 줘."
+        "아래 [실시간 수집 데이터]에 없는 경기는 절대 지어내지 말고 확인된 경기만 분석해 줘."
     )
 
     if slot == "07_nba_nhl":
         header = f"[{date_str} 아침 07:00 NBA · NHL 고퀄리티 예약분석]"
-        guide = "피나클(Pinnacle) 로우비그 배당 흐름과 프로토 환산 배당을 비교하여 오늘 NBA·NHL 경기를 핵심 위주로 깔끔하게 분석해 줘."
+        guide = "피나클(Pinnacle) 로우비그 배당 흐름과 프로토 환산 배당을 비교하여 오늘 NBA·NHL 경기를 분석해 줘."
     elif slot in ("17_domestic", "13_weekend_domestic"):
         time_label = "평일 낮 17:00" if slot == "17_domestic" else "주말 낮 13:00"
         header = f"[{date_str} {time_label} 국내경기 & 아시아축구 예약분석]"
         guide = (
             "오늘 열리는 국내 경기(KBL, WKBL, V-리그, KBO) 및 한국축구(K리그)·일본축구(J리그)·AFC챔피언스리그 경기가 있다면 모두 포함해 분석해 줘. "
-            "배당과 기준점은 국내 공식 '베트맨 프로토 승부식' 기준을 최우선으로 삼고, 확인되는 범위 내에서 밸류 구간을 짚어 줘."
+            "배당과 기준점은 국내 공식 '베트맨 프로토 승부식' 기준을 최우선으로 삼고 밸류 구간을 짚어 줘."
         )
     elif slot == "01_overseas_soccer":
         header = f"[{date_str} 평일 새벽 01:00 ~ 05:50 해외축구 전 경기 예약분석]"
         guide = "새벽 1시~5시 50분(KST) 해외축구 경기를 피나클·베트맨 배당 흐름 기준으로 핸디캡·언오버 핵심 픽을 정리해 줘."
-    else:
+    elif slot == "20_weekend_soccer":
         header = f"[{date_str} 주말 밤 20:00 ~ 새벽 05:30 해외축구리그 통합 예약분석]"
         guide = "밤 8시~새벽 5시 30분(KST) 주말 해외축구리그 경기를 피나클·베트맨 배당 흐름 기준으로 핸디캡·언오버 핵심 픽과 최적 조합을 정리해 줘."
+    else:
+        header = f"[{date_str} 전체 종목 통합 분석 (해외축구 · NBA · NHL · 국내경기)]"
+        guide = "해외축구, NBA, NHL, 국내경기 및 아시아축구까지 수집된 모든 종목을 섹션별로 나누어 핵심 픽과 최적 조합을 보고해 줘."
 
     return f"{header}\n{guide}\n{common_style_rules}\n\n[실시간 수집 데이터]\n{live_data}"
 
