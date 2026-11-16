@@ -77,8 +77,8 @@ def generate_analysis_text(prompt: str) -> str:
         
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # 429 에러(할당량 초과) 방지를 위해 가벼운 모델부터 순차 시도
-    models_to_try = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
+    # 최신 권장 모델 (3.8 계열) 적용
+    models_to_try = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
     last_exception = None
 
     for model_name in models_to_try:
