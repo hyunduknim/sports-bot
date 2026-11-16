@@ -71,10 +71,9 @@ def build_prompt(slot: str, date_str: str) -> str:
 
 
 def generate_analysis_text(prompt: str) -> str:
-    print(f"DEBUG KEY CHECK -> len:{len(GEMINI_API_KEY)}, prefix:{GEMINI_API_KEY[:4]}", flush=True)
     client = genai.Client(api_key=GEMINI_API_KEY)
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             tools=[types.Tool(google_search=types.GoogleSearch())],
