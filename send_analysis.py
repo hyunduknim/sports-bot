@@ -36,6 +36,15 @@ def detect_current_slot(now_kst: datetime.datetime) -> str:
     return "all_sports"
 
 
+def to_kst_str(date_iso: str) -> str:
+    try:
+        dt = datetime.datetime.fromisoformat(date_iso.replace("Z", "+00:00"))
+        kst_dt = dt.astimezone(pytz.timezone("Asia/Seoul"))
+        return kst_dt.strftime("%m/%d %H:%M KST")
+    except Exception:
+        return date_iso
+
+
 def fetch_espn_scoreboard(sport_path: str, dates_str: str) -> list:
     url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard?dates={dates_str}"
     try:
@@ -45,8 +54,7 @@ def fetch_espn_scoreboard(sport_path: str, dates_str: str) -> list:
         data = r.json()
         lines = []
         for ev in data.get("events", []):
-            name = ev.get("name", "")
-            date_iso = ev.get("date", "")
+            date_kst = to_kst_str(ev.get("date", ""))
             comp = (ev.get("competitions") or [{}])[0]
             odds_list = comp.get("odds") or []
             odds_info = ""
@@ -54,25 +62,31 @@ def fetch_espn_scoreboard(sport_path: str, dates_str: str) -> list:
                 o = odds_list[0]
                 details = o.get("details", "")
                 ou = o.get("overUnder", "")
-                odds_info = f" | 배당/기준: {details}, O/U {ou}"
+                odds_info = f" | 배당/기준: {details}, 언오버 {ou}"
             competitors = comp.get("competitors") or []
-            rec_parts = []
+            home_str, away_str = "", ""
             for c in competitors:
                 t_name = c.get("team", {}).get("displayName", "")
                 ha = c.get("homeAway", "")
                 recs = c.get("records") or []
                 rec = recs[0].get("summary", "") if recs else ""
-                rec_parts.append(f"{t_name}({ha}, {rec})")
-            lines.append(f"- {name} ({date_iso}) | {' vs '.join(rec_parts)}{odds_info}")
+                if ha == "home":
+                    home_str = f"{t_name}(홈, {rec})"
+                else:
+                    away_str = f"{t_name}(원정, {rec})"
+            lines.append(f"- [{date_kst}] {home_str} vs {away_str}{odds_info}")
         return lines
     except Exception:
         return []
 
 
-def fetch_google_news_rss(query: str, max_items: int = 8) -> str:
+def fetch_google_news_rss(query: str, max_items: int = 8, lang: str = "ko") -> str:
     try:
         q = urllib.parse.quote(query)
-        url = f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
+        if lang == "ko":
+            url = f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
+        else:
+            url = f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
         r = requests.get(url, timeout=(5, 10))
         if r.status_code != 200:
             return ""
@@ -105,6 +119,12 @@ def collect_nba_nhl(yesterday_ymd: str, today_ymd: str) -> list:
     nhl = fetch_espn_scoreboard("hockey/nhl", yesterday_ymd) + fetch_espn_scoreboard("hockey/nhl", today_ymd)
     out.append("[NBA 공식 일정/배당]\n" + ("\n".join(nba) if nba else "조회된 경기 없음"))
     out.append("[NHL 공식 일정/배당]\n" + ("\n".join(nhl) if nhl else "조회된 경기 없음"))
+    nba_news = fetch_google_news_rss("NBA injury report preview odds today", max_items=6, lang="en")
+    nhl_news = fetch_google_news_rss("NHL starting goalies injury preview picks today", max_items=6, lang="en")
+    if nba_news:
+        out.append("[NBA 주요 부상/프리뷰 소식]\n" + nba_news)
+    if nhl_news:
+        out.append("[NHL 골리/부상/프리뷰 소식]\n" + nhl_news)
     return out
 
 
@@ -149,6 +169,9 @@ def collect_overseas_soccer(yesterday_ymd: str, today_ymd: str) -> list:
         games = fetch_espn_scoreboard(path, yesterday_ymd) + fetch_espn_scoreboard(path, today_ymd)
         if games:
             out.append(f"[{label}]\n" + "\n".join(games))
+    soccer_news = fetch_google_news_rss("football prediction preview team news odds today", max_items=6, lang="en")
+    if soccer_news:
+        out.append("[해외축구 프리뷰/팀 뉴스]\n" + soccer_news)
     return out
 
 
@@ -175,16 +198,19 @@ def collect_live_context(slot: str, now_kst: datetime.datetime) -> str:
 
 def build_prompt(slot: str, date_str: str, live_data: str) -> str:
     common_style_rules = (
-        "1) 텔레그램 메시지용이므로 **, *, ###, --- 같은 마크다운 기호는 절대 쓰지 말고 깔끔한 줄바꿈과 이모지(🌿, 🏀, 🏒, ⚽, 📌)로만 보기 좋게 작성해 줘.\n"
-        "2) 모든 팀명은 반드시 한국어 팀명(예: 필라델피아, 브루클린, 휴스턴, 마이애미 등)으로 적고, 빨간색(🔴, 🟥) 이모지는 절대 쓰지 마.\n"
-        "3) 일반승·핸디캡(마핸/프핸)·언오버(기준점)를 모두 종합 분석한 뒤, 주력·부주력으로 나누지 말고 경기당 가장 확실한 '최종 추천픽 딱 1개'만 🌿 표시와 함께 제시해 줘.\n"
-        "4) 각 경기마다 [경기 시간 / 매치업] → [핵심 근거 1~2줄] → [🌿 추천픽: ...] 순서로 통일하고, 맨 마지막에 최적 2폴더 조합 1~2개만 정리해 줘.\n"
+        "1) 텔레그램 메시지용이므로 **, *, ###, --- 같은 마크다운 기호는 절대 쓰지 말고 깔끔한 줄바꿈과 이모지(🌿, 🏀, 🏒, ⚽, 📌)로만 작성해 줘.\n"
+        "2) 모든 팀명은 반드시 한국어 풀네임으로 적고 (홈) / (원정)을 꼭 표시해 줘. 빨간색(🔴, 🟥) 이모지는 절대 쓰지 마.\n"
+        "3) 절대로 1줄 요약으로 대충 넘기지 말고, 경기마다 아래 양식대로 상세한 분석 이유를 꼭 작성해 줘:\n"
+        "   [종목 | 한국시간] 홈팀(홈) vs 원정팀(원정) (기준점/배당)\n"
+        "   • 전력/기세 분석: 양 팀 시즌 성적, 홈/원정 유불리, 최근 흐름, 부상자·골리·백투백 체력 변수와 배당 흐름을 3~4문장으로 디테일하게 설명\n"
+        "   🌿 최종 추천픽: (일반승·핸디캡·언오버를 모두 종합해서 가장 확률과 밸류가 높은 딱 1개만 선정)\n"
+        "4) 맨 마지막에는 전체 경기 중 가장 안정적인 2폴더 최적 조합 1~2개만 깔끔하게 정리해 줘.\n"
         "5) 아래 [실시간 수집 데이터]에 없는 경기는 절대 지어내지 마."
     )
 
     if slot == "07_nba_nhl":
         header = f"[{date_str} 아침 07:00 NBA · NHL 고퀄리티 예약분석]"
-        guide = "피나클(Pinnacle) 로우비그 배당 흐름과 프로토 환산 배당을 비교하여 오늘 NBA·NHL 경기를 분석해 줘."
+        guide = "피나클(Pinnacle) 로우비그 배당 흐름과 프로토 환산 배당을 비교하여 오늘 NBA·NHL 경기를 디테일하게 분석해 줘."
     elif slot in ("17_domestic", "13_weekend_domestic"):
         time_label = "평일 낮 17:00" if slot == "17_domestic" else "주말 낮 13:00"
         header = f"[{date_str} {time_label} 국내경기 & 아시아축구 예약분석]"
@@ -194,27 +220,28 @@ def build_prompt(slot: str, date_str: str, live_data: str) -> str:
         )
     elif slot == "01_overseas_soccer":
         header = f"[{date_str} 평일 새벽 01:00 ~ 05:50 해외축구 전 경기 예약분석]"
-        guide = "새벽 1시~5시 50분(KST) 해외축구 경기를 피나클·베트맨 배당 흐름 기준으로 분석해 줘."
+        guide = "새벽 1시~5시 50분(KST) 해외축구 경기를 피나클·베트맨 배당 흐름 기준으로 디테일하게 분석해 줘."
     elif slot == "20_weekend_soccer":
         header = f"[{date_str} 주말 밤 20:00 ~ 새벽 05:30 해외축구리그 통합 예약분석]"
-        guide = "밤 8시~새벽 5시 30분(KST) 주말 해외축구리그 경기를 피나클·베트맨 배당 흐름 기준으로 분석해 줘."
+        guide = "밤 8시~새벽 5시 30분(KST) 주말 해외축구리그 경기를 피나클·베트맨 배당 흐름 기준으로 디테일하게 분석해 줘."
     else:
         header = f"[{date_str} 전체 종목 통합 분석 (해외축구 · NBA · NHL · 국내경기)]"
-        guide = "해외축구, NBA, NHL, 국내경기 및 아시아축구까지 수집된 모든 종목을 섹션별로 나누어 분석해 줘."
+        guide = "해외축구, NBA, NHL, 국내경기 및 아시아축구까지 수집된 모든 종목을 섹션별로 나누어 디테일하게 분석해 줘."
 
     return f"{header}\n{guide}\n\n{common_style_rules}\n\n[실시간 수집 데이터]\n{live_data}"
 
 
 def clean_telegram_text(text: str) -> str:
     text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"\*(.*?)\*", r"\1", text)
     text = re.sub(r"(?m)^#{1,6}\s*", "", text)
-    text = re.sub(r"(?m)^\*\s+", "• ", text)
+    text = re.sub(r"(?m)^\s*[\*\-]\s+", "• ", text)
     text = text.replace("---", "──────────")
     return text.strip()
 
 
 def generate_analysis_text(prompt: str) -> str:
-    client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=60000))
+    client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=90000))
     models_to_try = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
     last_err = None
 
@@ -224,7 +251,7 @@ def generate_analysis_text(prompt: str) -> str:
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=4096),
+                config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=8192),
             )
             if response and response.text:
                 return clean_telegram_text(response.text)
