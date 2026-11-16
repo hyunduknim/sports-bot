@@ -175,11 +175,11 @@ def collect_live_context(slot: str, now_kst: datetime.datetime) -> str:
 
 def build_prompt(slot: str, date_str: str, live_data: str) -> str:
     common_style_rules = (
-        "반드시 눈이 피로한 빨간색(🔴, 🟥) 이모지나 원색 강조를 절대 사용하지 말고, "
-        "눈이 편안한 스타일(🌿 최종 추천픽)로만 작성해 줘. "
-        "일반승·핸디캡(마핸/프핸)·언오버(기준점)를 모두 종합 분석한 뒤, 주력·부주력으로 나누지 말고 "
-        "경기당 가장 확률과 밸류가 높은 '최종 추천픽 딱 1개'만 선정해서 제시하고 최적 2~3폴더 조합을 정리해 줘. "
-        "아래 [실시간 수집 데이터]에 없는 경기는 절대 지어내지 말고 확인된 경기만 분석해 줘."
+        "1) 텔레그램 메시지용이므로 **, *, ###, --- 같은 마크다운 기호는 절대 쓰지 말고 깔끔한 줄바꿈과 이모지(🌿, 🏀, 🏒, ⚽, 📌)로만 보기 좋게 작성해 줘.\n"
+        "2) 모든 팀명은 반드시 한국어 팀명(예: 필라델피아, 브루클린, 휴스턴, 마이애미 등)으로 적고, 빨간색(🔴, 🟥) 이모지는 절대 쓰지 마.\n"
+        "3) 일반승·핸디캡(마핸/프핸)·언오버(기준점)를 모두 종합 분석한 뒤, 주력·부주력으로 나누지 말고 경기당 가장 확실한 '최종 추천픽 딱 1개'만 🌿 표시와 함께 제시해 줘.\n"
+        "4) 각 경기마다 [경기 시간 / 매치업] → [핵심 근거 1~2줄] → [🌿 추천픽: ...] 순서로 통일하고, 맨 마지막에 최적 2폴더 조합 1~2개만 정리해 줘.\n"
+        "5) 아래 [실시간 수집 데이터]에 없는 경기는 절대 지어내지 마."
     )
 
     if slot == "07_nba_nhl":
@@ -202,12 +202,20 @@ def build_prompt(slot: str, date_str: str, live_data: str) -> str:
         header = f"[{date_str} 전체 종목 통합 분석 (해외축구 · NBA · NHL · 국내경기)]"
         guide = "해외축구, NBA, NHL, 국내경기 및 아시아축구까지 수집된 모든 종목을 섹션별로 나누어 분석해 줘."
 
-    return f"{header}\n{guide}\n{common_style_rules}\n\n[실시간 수집 데이터]\n{live_data}"
+    return f"{header}\n{guide}\n\n{common_style_rules}\n\n[실시간 수집 데이터]\n{live_data}"
+
+
+def clean_telegram_text(text: str) -> str:
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"(?m)^#{1,6}\s*", "", text)
+    text = re.sub(r"(?m)^\*\s+", "• ", text)
+    text = text.replace("---", "──────────")
+    return text.strip()
 
 
 def generate_analysis_text(prompt: str) -> str:
     client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=60000))
-    models_to_try = ["gemini-4-hydrogen","gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
+    models_to_try = ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
     last_err = None
 
     for model_name in models_to_try:
@@ -216,10 +224,10 @@ def generate_analysis_text(prompt: str) -> str:
             response = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=2048),
+                config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=4096),
             )
             if response and response.text:
-                return response.text
+                return clean_telegram_text(response.text)
         except Exception as e:
             print(f"Model {model_name} failed: {e}", flush=True)
             last_err = e
