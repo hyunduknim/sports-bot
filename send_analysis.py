@@ -36,7 +36,7 @@ def detect_current_slot(now_kst: datetime.datetime) -> str:
 def fetch_espn_scoreboard(sport_path: str, dates_str: str) -> list:
     url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard?dates={dates_str}"
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url, timeout=(5, 8))
         if r.status_code != 200:
             return []
         data = r.json()
@@ -68,14 +68,14 @@ def fetch_espn_scoreboard(sport_path: str, dates_str: str) -> list:
 
 def fetch_wisetoto_text() -> str:
     try:
-        r = requests.get("https://www.wisetoto.com/", headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        r = requests.get("https://www.wisetoto.com/", headers={"User-Agent": "Mozilla/5.0"}, timeout=(5, 10))
         r.encoding = r.apparent_encoding or "utf-8"
         text = re.sub(r"<script.*?</script>|<style.*?</style>", " ", r.text, flags=re.S | re.I)
         text = re.sub(r"<[^>]+>", " ", text)
         text = html.unescape(re.sub(r"\s+", " ", text)).strip()
         return text[:4500]
     except Exception as e:
-        return f"와이즈토토 조회 실패: {e}"
+        return f"와이즈토토 연결 지연(해외서버 제한 가능): {e}"
 
 
 def collect_live_context(slot: str, now_kst: datetime.datetime) -> str:
@@ -89,7 +89,7 @@ def collect_live_context(slot: str, now_kst: datetime.datetime) -> str:
         sections.append("[NBA 공식 일정/배당]\n" + ("\n".join(nba) if nba else "조회된 경기 없음"))
         sections.append("[NHL 공식 일정/배당]\n" + ("\n".join(nhl) if nhl else "조회된 경기 없음"))
     elif slot in ("17_domestic", "13_weekend_domestic"):
-        sections.append("[와이즈토토 프로토 승부식 실제 배당판]\n" + fetch_wisetoto_text())
+        sections.append("[와이즈토토 프로토 승부식 배당판]\n" + fetch_wisetoto_text())
     else:
         leagues = [
             ("EPL", "soccer/eng.1"),
@@ -114,8 +114,7 @@ def build_prompt(slot: str, date_str: str, live_data: str) -> str:
     common_style_rules = (
         "반드시 눈이 피로한 빨간색(🔴, 🟥) 이모지나 원색 강조를 절대 사용하지 말고, "
         "눈이 편안한 스타일(🌿 주력 추천픽, 💧 언오버/서브 추천픽, ⭐ 고배당 밸류픽)로만 작성해 줘. "
-        "단순 일반승 나열이 아니라 핸디캡(마핸/프핸 기준점)과 언오버(기준점)를 반드시 포함해 가장 밸류 높은 라인과 최적 2~3폴더 조합을 제시해 줘. "
-        "아래 [실시간 수집 데이터]에 없는 경기는 절대 지어내지 마."
+        "단순 일반승 나열이 아니라 핸디캡(마핸/프핸 기준점)과 언오버(기준점)를 반드시 포함해 가장 밸류 높은 라인과 최적 2~3폴더 조합을 제시해 줘."
     )
 
     if slot == "07_nba_nhl":
@@ -139,7 +138,7 @@ def build_prompt(slot: str, date_str: str, live_data: str) -> str:
 
 
 def generate_analysis_text(prompt: str) -> str:
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=60000))
     response = client.models.generate_content(
         model="gemini-3.8-flash",
         contents=prompt,
@@ -152,9 +151,10 @@ def send_telegram_message(text: str) -> None:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     max_len = 3900
     chunks = [text[i:i + max_len] for i in range(0, len(text), max_len)]
-    for chunk in chunks:
+    for idx, chunk in enumerate(chunks, 1):
+        print(f"Sending chunk {idx}/{len(chunks)} to Telegram...", flush=True)
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": chunk}
-        resp = requests.post(url, json=payload, timeout=30)
+        resp = requests.post(url, json=payload, timeout=(5, 15))
         resp.raise_for_status()
 
 
@@ -163,12 +163,15 @@ def main():
     now_kst = datetime.datetime.now(kst)
     date_str = now_kst.strftime("%Y-%m-%d (%a)")
     slot = detect_current_slot(now_kst)
-    print(f"Running slot: {slot}", flush=True)
+    print(f"[1/4] Running slot: {slot}", flush=True)
     live_data = collect_live_context(slot, now_kst)
+    print(f"[2/4] Collected data length: {len(live_data)}", flush=True)
     prompt = build_prompt(slot, date_str, live_data)
+    print("[3/4] Calling Gemini 3.8 Flash...", flush=True)
     report_text = generate_analysis_text(prompt)
+    print(f"[4/4] Generated length: {len(report_text)}, sending to Telegram...", flush=True)
     send_telegram_message(report_text)
-    print(f"[{date_str}] Sent slot '{slot}' to Telegram chat {TELEGRAM_CHAT_ID}.", flush=True)
+    print(f"DONE! Sent slot '{slot}' to Telegram chat {TELEGRAM_CHAT_ID}.", flush=True)
 
 
 if __name__ == "__main__":
