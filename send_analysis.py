@@ -2,6 +2,8 @@ import os
 import re
 import html
 import time
+import urllib.parse
+import xml.etree.ElementTree as ET
 import datetime
 import pytz
 import requests
@@ -67,6 +69,24 @@ def fetch_espn_scoreboard(sport_path: str, dates_str: str) -> list:
         return []
 
 
+def fetch_google_news_rss(query: str, max_items: int = 8) -> str:
+    try:
+        q = urllib.parse.quote(query)
+        url = f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
+        r = requests.get(url, timeout=(5, 10))
+        if r.status_code != 200:
+            return ""
+        root = ET.fromstring(r.content)
+        items = []
+        for item in root.findall(".//item")[:max_items]:
+            title = item.findtext("title", "")
+            pub = item.findtext("pubDate", "")
+            items.append(f"- {title} ({pub})")
+        return "\n".join(items)
+    except Exception:
+        return ""
+
+
 def fetch_wisetoto_text() -> str:
     try:
         r = requests.get("https://www.wisetoto.com/", headers={"User-Agent": "Mozilla/5.0"}, timeout=(5, 10))
@@ -75,13 +95,14 @@ def fetch_wisetoto_text() -> str:
         text = re.sub(r"<[^>]+>", " ", text)
         text = html.unescape(re.sub(r"\s+", " ", text)).strip()
         return text[:2500]
-    except Exception as e:
-        return f"와이즈토토 연결 지연: {e}"
+    except Exception:
+        return ""
 
 
 def collect_live_context(slot: str, now_kst: datetime.datetime) -> str:
     today_ymd = now_kst.strftime("%Y%m%d")
     yesterday_ymd = (now_kst - datetime.timedelta(days=1)).strftime("%Y%m%d")
+    date_ko = f"{now_kst.month}월 {now_kst.day}일"
     sections = []
 
     if slot == "07_nba_nhl":
@@ -90,7 +111,26 @@ def collect_live_context(slot: str, now_kst: datetime.datetime) -> str:
         sections.append("[NBA 공식 일정/배당]\n" + ("\n".join(nba) if nba else "조회된 경기 없음"))
         sections.append("[NHL 공식 일정/배당]\n" + ("\n".join(nhl) if nhl else "조회된 경기 없음"))
     elif slot in ("17_domestic", "13_weekend_domestic"):
-        sections.append("[와이즈토토 프로토 승부식 배당판]\n" + fetch_wisetoto_text())
+        asia_leagues = [
+            ("K리그1", "soccer/kor.1"),
+            ("J리그", "soccer/jpn.1"),
+            ("AFC챔피언스리그", "soccer/afc.champions"),
+        ]
+        for label, path in asia_leagues:
+            games = fetch_espn_scoreboard(path, yesterday_ymd) + fetch_espn_scoreboard(path, today_ymd)
+            if games:
+                sections.append(f"[{label} 공식 일정]\n" + "\n".join(games))
+
+        news_kbl = fetch_google_news_rss(f"{date_ko} 프로농구 KBL WKBL V리그 경기 일정 프리뷰")
+        news_proto = fetch_google_news_rss(f"프로토 승부식 {date_ko} KBL WKBL 배당")
+        if news_kbl:
+            sections.append(f"[{date_ko} 국내경기 뉴스/일정]\n{news_kbl}")
+        if news_proto:
+            sections.append(f"[프로토 관련 소식]\n{news_proto}")
+
+        wt = fetch_wisetoto_text()
+        if len(wt) > 200:
+            sections.append(f"[와이즈토토 프로토 배당판]\n{wt}")
     else:
         leagues = [
             ("EPL", "soccer/eng.1"),
@@ -106,9 +146,11 @@ def collect_live_context(slot: str, now_kst: datetime.datetime) -> str:
             games = fetch_espn_scoreboard(path, yesterday_ymd) + fetch_espn_scoreboard(path, today_ymd)
             if games:
                 sections.append(f"[{label}]\n" + "\n".join(games))
-        sections.append("[와이즈토토 프로토 참고]\n" + fetch_wisetoto_text()[:1500])
+        wt = fetch_wisetoto_text()
+        if len(wt) > 200:
+            sections.append(f"[와이즈토토 프로토 참고]\n{wt[:1500]}")
 
-    return "\n\n".join(sections)
+    return "\n\n".join(sections) if sections else "수집된 경기 데이터가 없습니다."
 
 
 def build_prompt(slot: str, date_str: str, live_data: str) -> str:
@@ -116,7 +158,7 @@ def build_prompt(slot: str, date_str: str, live_data: str) -> str:
         "반드시 눈이 피로한 빨간색(🔴, 🟥) 이모지나 원색 강조를 절대 사용하지 말고, "
         "눈이 편안한 스타일(🌿 주력 추천픽, 💧 언오버/서브 추천픽, ⭐ 고배당 밸류픽)로만 작성해 줘. "
         "단순 일반승 나열이 아니라 핸디캡(마핸/프핸 기준점)과 언오버(기준점)를 반드시 포함해 가장 밸류 높은 라인과 최적 2~3폴더 조합을 제시해 줘. "
-        "아래 [실시간 수집 데이터]에 없는 경기는 절대 지어내지 마."
+        "아래 [실시간 수집 데이터]에 없는 경기는 절대 지어내지 말고, 확인된 경기만 분석해 줘."
     )
 
     if slot == "07_nba_nhl":
@@ -127,7 +169,7 @@ def build_prompt(slot: str, date_str: str, live_data: str) -> str:
         header = f"[{date_str} {time_label} 국내경기 & 아시아축구 예약분석]"
         guide = (
             "오늘 열리는 국내 경기(KBL, WKBL, V-리그, KBO) 및 한국축구(K리그)·일본축구(J리그)·AFC챔피언스리그 경기가 있다면 모두 포함해 분석해 줘. "
-            "배당은 반드시 국내 공식 '베트맨 프로토 승부식' 실제 배당과 기준점을 최우선 기준으로 삼고, 해외 배당 흐름 대비 밸류 구간을 짚어 줘."
+            "배당과 기준점은 국내 공식 '베트맨 프로토 승부식' 기준을 최우선으로 삼고, 확인되는 범위 내에서 밸류 구간을 짚어 줘."
         )
     elif slot == "01_overseas_soccer":
         header = f"[{date_str} 평일 새벽 01:00 ~ 05:50 해외축구 전 경기 예약분석]"
@@ -173,7 +215,7 @@ def resolve_telegram_chat_id() -> str:
             last_msg = results[-1].get("message") or results[-1].get("edited_message") or {}
             detected_id = last_msg.get("chat", {}).get("id")
             if detected_id:
-                print(f"Auto-detected chat_id from /start: {detected_id}", flush=True)
+                print(f"Auto-detected chat_id: {detected_id}", flush=True)
                 return str(detected_id)
     except Exception as e:
         print(f"Chat ID check note: {e}", flush=True)
