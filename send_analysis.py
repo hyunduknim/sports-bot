@@ -72,10 +72,13 @@ def build_prompt(slot: str, date_str: str) -> str:
 
 
 def generate_analysis_text(prompt: str) -> str:
+    if not GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY 환경변수가 설정되지 않았습니다.")
+        
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # 3.5 계열 모델 순차 폴백 적용 (안정성 강화)
-    models_to_try = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
+    # 429 에러(할당량 초과) 방지를 위해 가벼운 모델부터 순차 시도
+    models_to_try = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
     last_exception = None
 
     for model_name in models_to_try:
@@ -89,7 +92,7 @@ def generate_analysis_text(prompt: str) -> str:
                     temperature=0.3,
                 ),
             )
-            if response.text:
+            if response and response.text:
                 return response.text
         except Exception as e:
             print(f"Model {model_name} failed: {e}")
@@ -101,15 +104,21 @@ def generate_analysis_text(prompt: str) -> str:
 
 
 def send_telegram_message(text: str) -> None:
+    if not TELEGRAM_BOT_TOKEN:
+        raise ValueError("TELEGRAM_BOT_TOKEN 환경변수가 설정되지 않았습니다.")
+        
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     max_len = 3900
     chunks = [text[i:i + max_len] for i in range(0, len(text), max_len)]
+    
     for chunk in chunks:
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
             "text": chunk,
         }
         resp = requests.post(url, json=payload, timeout=30)
+        if not resp.ok:
+            print(f"Telegram API Error: {resp.text}")
         resp.raise_for_status()
 
 
@@ -117,11 +126,17 @@ def main():
     kst = pytz.timezone("Asia/Seoul")
     now_kst = datetime.datetime.now(kst)
     date_str = now_kst.strftime("%Y-%m-%d (%a)")
+    
+    print(f"[{date_str}] Starting analysis workflow...")
     slot = detect_current_slot(now_kst)
+    print(f"Selected slot: {slot}")
+    
     prompt = build_prompt(slot, date_str)
     report_text = generate_analysis_text(prompt)
+    
+    print("Sending analysis report to Telegram...")
     send_telegram_message(report_text)
-    print(f"[{date_str}] Sent slot '{slot}' to Telegram chat {TELEGRAM_CHAT_ID}.")
+    print(f"Successfully sent slot '{slot}' to Telegram chat {TELEGRAM_CHAT_ID}.")
 
 
 if __name__ == "__main__":
