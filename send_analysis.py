@@ -1,4 +1,5 @@
 import os
+import time
 import datetime
 import pytz
 import requests
@@ -76,31 +77,31 @@ def generate_analysis_text(prompt: str) -> str:
         raise ValueError("GEMINI_API_KEY 환경변수가 설정되지 않았습니다.")
         
     client = genai.Client(api_key=GEMINI_API_KEY)
-    
-    # 최신 권장 모델 (3.8 계열) 적용
     models_to_try = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
-    last_exception = None
-
+    
     for model_name in models_to_try:
-        try:
-            print(f"Trying model: {model_name}...")
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
-                    temperature=0.3,
-                ),
-            )
-            if response and response.text:
-                return response.text
-        except Exception as e:
-            print(f"Model {model_name} failed: {e}")
-            last_exception = e
+        for attempt in range(3):  # 모델별로 최대 3번 재시도
+            try:
+                print(f"Trying model: {model_name} (Attempt {attempt+1})...")
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        tools=[types.Tool(google_search=types.GoogleSearch())],
+                        temperature=0.3,
+                    ),
+                )
+                if response and response.text:
+                    return response.text
+            except Exception as e:
+                print(f"Model {model_name} failed on attempt {attempt+1}: {e}")
+                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                    print("Rate limit hit. Waiting 5 seconds before retry...")
+                    time.sleep(5)  # 429 에러 시 5초 대기 후 재시도
+                else:
+                    break  # 429가 아닌 다른 에러는 다음 모델로 바로 전환
 
-    if last_exception:
-        raise last_exception
-    return "분석 결과를 생성하지 못했습니다."
+    raise RuntimeError("모든 모델 시도가 실패했습니다. API 할당량을 확인해주세요.")
 
 
 def send_telegram_message(text: str) -> None:
