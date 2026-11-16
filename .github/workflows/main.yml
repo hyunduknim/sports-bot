@@ -6,7 +6,7 @@ on:
       slot:
         description: '실행할 분석 타임슬롯 (07_nba_nhl / 17_domestic / 13_weekend_domestic / 01_overseas_soccer / 20_weekend_soccer)'
         required: true
-        default: '17_domestic'
+        default: '01_overseas_soccer' '07_nba_nhl'
 
   schedule:
     - cron: '0 22 * * *'
