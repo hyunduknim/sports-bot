@@ -73,9 +73,9 @@ def fetch_wisetoto_text() -> str:
         text = re.sub(r"<script.*?</script>|<style.*?</style>", " ", r.text, flags=re.S | re.I)
         text = re.sub(r"<[^>]+>", " ", text)
         text = html.unescape(re.sub(r"\s+", " ", text)).strip()
-        return text[:4500]
+        return text[:2500]
     except Exception as e:
-        return f"와이즈토토 연결 지연(해외서버 제한 가능): {e}"
+        return f"와이즈토토 연결 지연: {e}"
 
 
 def collect_live_context(slot: str, now_kst: datetime.datetime) -> str:
@@ -105,7 +105,7 @@ def collect_live_context(slot: str, now_kst: datetime.datetime) -> str:
             games = fetch_espn_scoreboard(path, yesterday_ymd) + fetch_espn_scoreboard(path, today_ymd)
             if games:
                 sections.append(f"[{label}]\n" + "\n".join(games))
-        sections.append("[와이즈토토 프로토 참고]\n" + fetch_wisetoto_text()[:2000])
+        sections.append("[와이즈토토 프로토 참고]\n" + fetch_wisetoto_text()[:1500])
 
     return "\n\n".join(sections)
 
@@ -114,12 +114,13 @@ def build_prompt(slot: str, date_str: str, live_data: str) -> str:
     common_style_rules = (
         "반드시 눈이 피로한 빨간색(🔴, 🟥) 이모지나 원색 강조를 절대 사용하지 말고, "
         "눈이 편안한 스타일(🌿 주력 추천픽, 💧 언오버/서브 추천픽, ⭐ 고배당 밸류픽)로만 작성해 줘. "
-        "단순 일반승 나열이 아니라 핸디캡(마핸/프핸 기준점)과 언오버(기준점)를 반드시 포함해 가장 밸류 높은 라인과 최적 2~3폴더 조합을 제시해 줘."
+        "단순 일반승 나열이 아니라 핸디캡(마핸/프핸 기준점)과 언오버(기준점)를 반드시 포함해 가장 밸류 높은 라인과 최적 2~3폴더 조합을 제시해 줘. "
+        "아래 [실시간 수집 데이터]에 없는 경기는 절대 지어내지 마."
     )
 
     if slot == "07_nba_nhl":
         header = f"[{date_str} 아침 07:00 NBA · NHL 고퀄리티 예약분석]"
-        guide = "피나클(Pinnacle) 로우비그 배당 흐름과 프로토 환산 배당을 비교하여 오늘 NBA·NHL 경기를 분석해 줘."
+        guide = "피나클(Pinnacle) 로우비그 배당 흐름과 프로토 환산 배당을 비교하여 오늘 NBA·NHL 경기를 핵심 위주로 깔끔하게 분석해 줘."
     elif slot in ("17_domestic", "13_weekend_domestic"):
         time_label = "평일 낮 17:00" if slot == "17_domestic" else "주말 낮 13:00"
         header = f"[{date_str} {time_label} 국내경기 & 아시아축구 예약분석]"
@@ -138,12 +139,23 @@ def build_prompt(slot: str, date_str: str, live_data: str) -> str:
 
 
 def generate_analysis_text(prompt: str) -> str:
-    client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=60000))
-    response = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(temperature=0.3),
-    )
+    client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=180000))
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,
+                max_output_tokens=2048,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+    except Exception:
+        response = client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=2048),
+        )
     return response.text or "분석 결과를 생성하지 못했습니다."
 
 
