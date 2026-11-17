@@ -26,26 +26,7 @@ MODELS = [
 
 
 def resolve_telegram_chat_id() -> str:
-    env_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    if env_id:
-        return env_id
-    if not TELEGRAM_BOT_TOKEN:
-        return DEFAULT_CHAT_ID
-    try:
-        r = requests.get(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates",
-            timeout=10,
-        )
-        if r.ok:
-            results = r.json().get("result", [])
-            for item in reversed(results):
-                msg = item.get("message") or item.get("my_chat_member") or {}
-                chat = msg.get("chat", {})
-                if chat.get("id"):
-                    return str(chat["id"])
-    except Exception:
-        pass
-    return DEFAULT_CHAT_ID
+    return os.environ.get("TELEGRAM_CHAT_ID", "").strip() or DEFAULT_CHAT_ID
 
 
 def clean_telegram_text(text: str) -> str:
@@ -444,10 +425,7 @@ def main() -> None:
     elif 6 <= hour < 11:
         run_nba_nhl(now_kst, date_str, chat_id)
     elif 12 <= hour < 15:
-        if is_weekend:
-            run_domestic(now_kst, date_str, chat_id)
-        else:
-            run_domestic(now_kst, date_str, chat_id)
+        run_domestic(now_kst, date_str, chat_id)
     elif 16 <= hour < 19:
         run_domestic(now_kst, date_str, chat_id)
     elif 19 <= hour <= 23:
