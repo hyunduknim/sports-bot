@@ -26,7 +26,7 @@ MODELS = [
 
 
 def resolve_telegram_chat_id() -> str:
-    return os.environ.get("TELEGRAM_CHAT_ID", "").strip() or DEFAULT_CHAT_ID
+    return DEFAULT_CHAT_ID
 
 
 def clean_telegram_text(text: str) -> str:
