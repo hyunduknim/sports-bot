@@ -58,7 +58,6 @@ def fetch_espn_upcoming(sport_path: str, now_kst: datetime.datetime) -> list:
                     continue
                 seen_ids.add(ev_id)
 
-                # 이미 종료된(post) 경기는 제외하고 예정/진행중 경기만 수집
                 state = ev.get("status", {}).get("type", {}).get("state", "")
                 if state == "post":
                     continue
@@ -66,7 +65,6 @@ def fetch_espn_upcoming(sport_path: str, now_kst: datetime.datetime) -> list:
                 date_iso = ev.get("date", "")
                 try:
                     dt = datetime.datetime.fromisoformat(date_iso.replace("Z", "+00:00")).astimezone(kst_tz)
-                    # 오늘로부터 24시간 이내 경기만 포함
                     diff_hours = (dt - now_kst).total_seconds() / 3600.0
                     if diff_hours < -2 or diff_hours > 24:
                         continue
@@ -143,7 +141,13 @@ def clean_telegram_text(text: str) -> str:
 
 def call_gemini(title: str, guide: str, data_block: str, game_count: int) -> str:
     client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=90000))
-    models_to_try = ["gemini-3.8-flash", "gemini-4-hydrogen", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
+    models_to_try = [
+        "gemini-3.5-flash-lite",
+        "gemini-3.8-flash",
+        "gemini-4-hydrogen",
+        "gemini-3.6-flash",
+        "gemini-3.1-flash-lite",
+    ]
     sys_inst = (
         "당신은 한국인 스포츠 베팅 전문 애널리스트입니다. "
         "반드시 100% 한국어로만 작성하고 영어 문장이나 영어 약어 팀명(HOU, MIA 등)을 절대 쓰지 마세요. "
@@ -161,28 +165,27 @@ def call_gemini(title: str, guide: str, data_block: str, game_count: int) -> str
         "5) 맨 마지막에 가장 확실한 2폴더 추천 조합 1개를 덧붙여 줘."
     )
     prompt = f"{title}\n{guide}\n\n{rules}\n\n[경기 데이터]\n{data_block}"
-    last_err = None
 
-    for model_name in models_to_try:
-        try:
-            print(f"Trying model: {model_name} for {title}...", flush=True)
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=sys_inst,
-                    temperature=0.3,
-                    max_output_tokens=8192,
-                ),
-            )
-            if response and response.text:
-                return clean_telegram_text(response.text)
-        except Exception as e:
-            print(f"Model {model_name} failed: {e}", flush=True)
-            last_err = e
-            time.sleep(2)
+    for round_idx in range(1, 4):
+        for model_name in models_to_try:
+            try:
+                print(f"[Round {round_idx}] Trying model: {model_name} for {title}...", flush=True)
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=sys_inst,
+                        temperature=0.3,
+                        max_output_tokens=8192,
+                    ),
+                )
+                if response and response.text:
+                    return clean_telegram_text(response.text)
+            except Exception as e:
+                print(f"Model {model_name} failed: {e}", flush=True)
+                time.sleep(8 * round_idx)
 
-    raise RuntimeError(f"All models failed. Last error: {last_err}")
+    return f"{title}\n(일시적 AI 서버 혼잡으로 실시간 수집된 경기 및 기준점 원본을 먼저 전달합니다)\n\n{data_block}"
 
 
 def resolve_telegram_chat_id() -> str:
@@ -201,7 +204,6 @@ def resolve_telegram_chat_id() -> str:
 
 def send_telegram_message(text: str, target_chat_id: str) -> None:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    # 문단(경기) 단위로 끊어서 3800자 이내로 분할 전송 (문장 중간 잘림 방지)
     paragraphs = text.split("\n\n")
     chunks = []
     current = ""
@@ -244,6 +246,10 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
             len(nba_games),
         )
         send_telegram_message(text, chat_id)
+
+    if nba_games and nhl_games:
+        print("Cooling down 12s before NHL analysis...", flush=True)
+        time.sleep(12)
 
     if nhl_games:
         nhl_news = fetch_google_news_rss("NHL starting goalies injury preview picks today", max_items=5, lang="en")
@@ -338,7 +344,9 @@ def main():
         run_overseas_soccer(now_kst, date_str, chat_id)
     else:
         run_overseas_soccer(now_kst, date_str, chat_id)
+        time.sleep(10)
         run_nba_nhl(now_kst, date_str, chat_id)
+        time.sleep(10)
         run_domestic(now_kst, date_str, chat_id)
 
     print("ALL DONE!", flush=True)
