@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import html
 import time
 import urllib.parse
@@ -14,6 +15,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip().strip('"')
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "9112315353").strip()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
 MANUAL_SLOT = os.environ.get("MANUAL_SLOT", "").strip()
+HISTORY_FILE = "picks_history.json"
 
 
 def detect_current_slot(now_kst: datetime.datetime) -> str:
@@ -34,6 +36,24 @@ def detect_current_slot(now_kst: datetime.datetime) -> str:
     if is_weekend and 18 <= hour <= 22:
         return "20_weekend_soccer"
     return "07_nba_nhl"
+
+
+def load_history() -> list:
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+
+def save_history(items: list) -> None:
+    try:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(items[-30:], f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"History save note: {e}", flush=True)
 
 
 def fetch_espn_window(sport_path: str, start_kst: datetime.datetime, end_kst: datetime.datetime) -> list:
@@ -96,6 +116,56 @@ def fetch_espn_window(sport_path: str, start_kst: datetime.datetime, end_kst: da
     return lines
 
 
+def fetch_finished_scores(now_kst: datetime.datetime) -> str:
+    paths = [
+        ("NBA", "basketball/nba"),
+        ("NHL", "hockey/nhl"),
+        ("K리그1", "soccer/kor.1"),
+        ("J리그", "soccer/jpn.1"),
+        ("EPL", "soccer/eng.1"),
+        ("라리가", "soccer/esp.1"),
+        ("분데스리가", "soccer/ger.1"),
+        ("세리에A", "soccer/ita.1"),
+        ("리그1", "soccer/fra.1"),
+        ("챔피언스리그", "soccer/uefa.champions"),
+        ("네이션스리그", "soccer/uefa.nations"),
+    ]
+    dates_to_check = [
+        (now_kst - datetime.timedelta(days=1)).strftime("%Y%m%d"),
+        now_kst.strftime("%Y%m%d"),
+    ]
+    seen_ids = set()
+    results = []
+    for label, path in paths:
+        for d_str in dates_to_check:
+            url = f"https://site.api.espn.com/apis/site/v2/sports/{path}/scoreboard?dates={d_str}"
+            try:
+                r = requests.get(url, timeout=(4, 6))
+                if r.status_code != 200:
+                    continue
+                for ev in r.json().get("events", []):
+                    ev_id = ev.get("id", "")
+                    if ev_id in seen_ids:
+                        continue
+                    state = ev.get("status", {}).get("type", {}).get("state", "")
+                    if state != "post":
+                        continue
+                    seen_ids.add(ev_id)
+                    comp = (ev.get("competitions") or [{}])[0]
+                    home_s, away_s = "", ""
+                    for c in comp.get("competitors") or []:
+                        t_name = c.get("team", {}).get("displayName", "")
+                        score = c.get("score", "0")
+                        if c.get("homeAway") == "home":
+                            home_s = f"{t_name}(홈) {score}"
+                        else:
+                            away_s = f"{t_name}(원정) {score}"
+                    results.append(f"- [{label} 종료] {home_s} : {away_s}")
+            except Exception:
+                continue
+    return "\n".join(results)
+
+
 def fetch_google_news_rss(query: str, max_items: int = 10, lang: str = "ko") -> str:
     try:
         q = urllib.parse.quote(query)
@@ -137,12 +207,10 @@ def fetch_domestic_schedule_and_odds(now_kst: datetime.datetime) -> str:
     month_num = now_kst.month
     parts = []
 
-    # 1. 연합뉴스 '오늘의 경기(N일)' 검색 및 본문 추출
     yna_rss = fetch_google_news_rss(f"\"오늘의 경기({day_num}일)\" 연합뉴스 프로농구 프로배구", max_items=5)
     if yna_rss:
         parts.append(f"[연합뉴스 오늘의 경기 공식 일정]\n{yna_rss}")
 
-    # 2. 종목별 오늘 경기 프리뷰 기사 수집
     kbl_rss = fetch_google_news_rss(f"{month_num}월 {day_num}일 프로농구 OR 여자농구 경기 일정 맞대결", max_items=8)
     v_rss = fetch_google_news_rss(f"{month_num}월 {day_num}일 프로배구 V리그 남자부 여자부 경기 일정", max_items=8)
     if kbl_rss:
@@ -150,7 +218,6 @@ def fetch_domestic_schedule_and_odds(now_kst: datetime.datetime) -> str:
     if v_rss:
         parts.append(f"[오늘 국내 배구 프리뷰/일정]\n{v_rss}")
 
-    # 3. 와이즈토토 프로토 배당판 (해외서버 우회 프록시 포함)
     wt_text = ""
     try:
         r = requests.get("https://www.wisetoto.com/", headers={"User-Agent": "Mozilla/5.0"}, timeout=(4, 8))
@@ -180,7 +247,7 @@ def clean_telegram_text(text: str) -> str:
     return text.strip()
 
 
-def call_gemini(title: str, guide: str, data_block: str) -> str:
+def raw_gemini_call(sys_inst: str, prompt: str) -> str:
     client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=90000))
     models_to_try = [
         "gemini-3.5-flash-lite",
@@ -189,6 +256,28 @@ def call_gemini(title: str, guide: str, data_block: str) -> str:
         "gemini-3.6-flash",
         "gemini-3.1-flash-lite",
     ]
+    for round_idx in range(1, 4):
+        for model_name in models_to_try:
+            try:
+                print(f"[Round {round_idx}] Trying model: {model_name}...", flush=True)
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=sys_inst,
+                        temperature=0.2,
+                        max_output_tokens=8192,
+                    ),
+                )
+                if response and response.text:
+                    return clean_telegram_text(response.text)
+            except Exception as e:
+                print(f"Model {model_name} failed: {e}", flush=True)
+                time.sleep(8 * round_idx)
+    return ""
+
+
+def call_gemini(title: str, guide: str, data_block: str) -> str:
     sys_inst = (
         "당신은 한국인 스포츠 베팅 전문 애널리스트입니다. "
         "반드시 100% 한국어로만 작성하고 영어 문장이나 영어 약어 팀명(HOU, MIA 등)을 절대 쓰지 마세요. "
@@ -206,27 +295,62 @@ def call_gemini(title: str, guide: str, data_block: str) -> str:
         "5) 맨 마지막에 가장 확실한 2폴더 추천 조합 1개를 덧붙여 줘."
     )
     prompt = f"{title}\n{guide}\n\n{rules}\n\n[경기 데이터]\n{data_block}"
-
-    for round_idx in range(1, 4):
-        for model_name in models_to_try:
-            try:
-                print(f"[Round {round_idx}] Trying model: {model_name} for {title}...", flush=True)
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=sys_inst,
-                        temperature=0.3,
-                        max_output_tokens=8192,
-                    ),
-                )
-                if response and response.text:
-                    return clean_telegram_text(response.text)
-            except Exception as e:
-                print(f"Model {model_name} failed: {e}", flush=True)
-                time.sleep(8 * round_idx)
-
+    res = raw_gemini_call(sys_inst, prompt)
+    if res:
+        return res
     return f"{title}\n(일시적 AI 서버 혼잡으로 실시간 수집된 경기 및 기준점 원본을 먼저 전달합니다)\n\n{data_block}"
+
+
+def grade_previous_picks(now_kst: datetime.datetime, chat_id: str) -> None:
+    history = load_history()
+    pending = [item for item in history if item.get("status") == "pending"]
+    if not pending:
+        return
+
+    scores_text = fetch_finished_scores(now_kst)
+    dom_news = fetch_google_news_rss(f"{now_kst.month}월 {now_kst.day}일 프로농구 프로배구 경기 결과 스코어", max_items=8)
+    combined_scores = f"{scores_text}\n\n[국내 경기 결과 뉴스]\n{dom_news}".strip()
+    if not combined_scores:
+        return
+
+    picks_summary = "\n\n".join(
+        f"[{p['date']} | {p['slot']}]\n{p['picks_text']}" for p in pending
+    )
+    sys_inst = (
+        "당신은 스포츠 경기 결과 채점관입니다. "
+        "제공된 [종료된 경기 최종 스코어]와 [이전 추천픽 목록]을 대조하여, 실제로 경기가 종료되어 최종 스코어가 확인된 경기만 정확히 채점하세요. "
+        "아직 경기 결과가 확인되지 않은 경기는 채점하지 마세요. 마크다운 기호(*, **, #)는 절대 쓰지 마세요."
+    )
+    prompt = (
+        "아래 [이전 추천픽 목록] 중 [종료된 경기 최종 스코어]에서 결과가 확인된 경기만 골라서 채점해 줘.\n"
+        "양식:\n"
+        "📊 [경기 종료 자동 채점 결과]\n"
+        "• 홈팀 vs 원정팀 (최종 스코어) | 추천픽 -> 적중⭕ 또는 낙첨❌\n"
+        "마지막 줄에 총 전적(예: 5적중 2낙첨)을 요약해 줘. 결과가 하나도 확인되지 않았으면 정확히 'NONE'이라고만 답해 줘.\n\n"
+        f"[이전 추천픽 목록]\n{picks_summary}\n\n"
+        f"[종료된 경기 최종 스코어]\n{combined_scores}"
+    )
+    graded = raw_gemini_call(sys_inst, prompt)
+    if graded and graded.strip() != "NONE" and ("적중⭕" in graded or "낙첨❌" in graded):
+        send_telegram_message(graded, chat_id)
+        for item in history:
+            if item.get("status") == "pending":
+                item["status"] = "graded"
+        save_history(history)
+
+
+def record_picks_to_history(slot: str, date_str: str, analysis_text: str) -> None:
+    lines = [ln.strip() for ln in analysis_text.splitlines() if ("vs" in ln or "최종 추천픽" in ln)]
+    if not lines:
+        return
+    history = load_history()
+    history.append({
+        "date": date_str,
+        "slot": slot,
+        "status": "pending",
+        "picks_text": "\n".join(lines)[:3500],
+    })
+    save_history(history)
 
 
 def resolve_telegram_chat_id() -> str:
@@ -289,6 +413,7 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
             block,
         )
         send_telegram_message(text, chat_id)
+        record_picks_to_history("NBA", date_str, text)
 
     if nba_games and nhl_games:
         time.sleep(12)
@@ -304,6 +429,7 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
             block,
         )
         send_telegram_message(text, chat_id)
+        record_picks_to_history("NHL", date_str, text)
 
 
 def run_domestic(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None:
@@ -328,6 +454,7 @@ def run_domestic(now_kst: datetime.datetime, date_str: str, chat_id: str) -> Non
         block,
     )
     send_telegram_message(text, chat_id)
+    record_picks_to_history("국내경기", date_str, text)
 
 
 def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str, is_weekend_slot: bool = False) -> None:
@@ -370,6 +497,7 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
         block,
     )
     send_telegram_message(text, chat_id)
+    record_picks_to_history("해외축구", date_str, text)
 
 
 def main():
@@ -380,6 +508,10 @@ def main():
     chat_id = resolve_telegram_chat_id()
     print(f"Running slot: {slot} -> chat_id: {chat_id}", flush=True)
 
+    # 1. 이전 경기들 중 종료된 경기부터 적중⭕/낙첨❌ 자동 채점 후 전송
+    grade_previous_picks(now_kst, chat_id)
+
+    # 2. 이번 시간대 새 경기 분석 및 추천픽 저장
     if slot == "07_nba_nhl":
         run_nba_nhl(now_kst, date_str, chat_id)
     elif slot in ("17_domestic", "13_weekend_domestic"):
