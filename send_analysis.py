@@ -11,6 +11,7 @@ from google.genai import types
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip().strip('"').strip("'")
+DEFAULT_CHAT_ID = "9112315353"
 HISTORY_FILE = "picks_history.json"
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
@@ -183,6 +184,9 @@ def fetch_finished_scores(now_kst: datetime.datetime) -> str:
         ("soccer", "ger.1", "분데스리가"),
         ("soccer", "fra.1", "리그1"),
         ("soccer", "uefa.champions", "챔피언스리그"),
+        ("soccer", "kor.1", "K리그1"),
+        ("soccer", "jpn.1", "J리그"),
+        ("soccer", "afc.champions", "아챔"),
     ]
     dates = [
         (now_kst - datetime.timedelta(days=1)).strftime("%Y%m%d"),
@@ -219,6 +223,20 @@ def fetch_finished_scores(now_kst: datetime.datetime) -> str:
     return "\n".join(out)
 
 
+def fetch_via_jina(target_url: str, max_chars: int = 8000) -> str:
+    try:
+        r = requests.get(
+            f"https://r.jina.ai/{target_url}",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
+        if r.ok and r.text:
+            return r.text[:max_chars]
+    except Exception:
+        pass
+    return ""
+
+
 def fetch_google_news_rss(query: str, max_items: int = 8) -> str:
     q = urllib.parse.quote(query)
     url = f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
@@ -238,15 +256,21 @@ def fetch_google_news_rss(query: str, max_items: int = 8) -> str:
         return ""
 
 
-def fetch_via_jina(target_url: str, max_chars: int = 4000) -> str:
+def fetch_yonhap_today_schedule(now_kst: datetime.datetime) -> str:
+    q = urllib.parse.quote(f'"오늘의 경기" {now_kst.day}일 연합뉴스')
+    url = f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
     try:
-        r = requests.get(
-            f"https://r.jina.ai/{target_url}",
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=20,
-        )
-        if r.ok and r.text:
-            return r.text[:max_chars]
+        r = requests.get(url, timeout=15)
+        if not r.ok:
+            return ""
+        root = ET.fromstring(r.text)
+        for item in root.findall(".//item")[:5]:
+            title = item.findtext("title", "").strip()
+            link = item.findtext("link", "").strip()
+            if "오늘의 경기" in title and f"{now_kst.day}일" in title and link:
+                body = fetch_via_jina(link, max_chars=4000)
+                if body:
+                    return f"[{title}]\n{body}"
     except Exception:
         pass
     return ""
@@ -265,7 +289,7 @@ def raw_gemini_call(sys_inst: str, prompt: str) -> str:
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=sys_inst,
-                        temperature=0.4,
+                        temperature=0.3,
                     ),
                 )
                 if response and response.text:
@@ -283,10 +307,10 @@ def call_gemini(title: str, guide: str, data_block: str) -> str:
         "당신은 한국인 스포츠 베팅 전문 애널리스트입니다. "
         "반드시 100% 한국어로만 작성하고 영어 문장이나 영어 약어 팀명(HOU, MIA 등)을 절대 쓰지 마세요. "
         "마크다운 기호(*, **, #)와 빨간색 이모지(🔴, 🟥)를 절대 사용하지 마세요. "
-        "절대로 '데이터가 부족하다'거나 '수행이 불가능하다'는 안내문을 출력하지 말고, 제공된 뉴스·일정·배당 데이터에서 오늘 열리는 대진을 최대한 정확히 추려 분석하세요."
+        "절대로 [경기 데이터]에 없는 가상의 경기나 다른 날짜의 경기를 지어내지 마세요. 오직 오늘 실제로 열리는 것이 확인된 경기만 분석하세요."
     )
     rules = """
-1) 확인된 모든 오늘 경기를 단 한 경기도 빠뜨리지 말고 순서대로 전부 분석해 줘 (중간 생략 및 분석 거부 절대 금지).
+1) [경기 데이터]에서 오늘 날짜(KST)로 실제 열리는 것이 확인된 경기만 단 한 경기도 빠뜨리지 말고 순서대로 분석해 줘. (데이터에 없는 종목이나 없는 경기는 절대 지어내지 마!)
 2) 텔레그램 메시지용이므로 *, **, #, --- 같은 마크다운 기호와 빨간색 이모지(🔴, 🟥)는 절대 쓰지 마.
 3) 모든 팀명은 반드시 한국어 풀네임으로 적고 (홈) / (원정)과 한국시간(KST)을 꼭 표시해 줘.
 4) [핵심 베팅 전략 - 단일 유형 쏠림 절대 금지]
@@ -298,7 +322,7 @@ def call_gemini(title: str, guide: str, data_block: str) -> str:
 [종목 | 한국시간] 홈팀(홈) vs 원정팀(원정) | 배당/기준점 정보
 • 분석 근거: 양 팀 시즌 성적, 홈/원정 강약점, 백투백·부상 변수, 그리고 왜 이 픽(일반승/마핸/플핸/언오버/역배)이 가장 밸류가 높은지 2~3문장으로 명확하게 설명
 🌿 최종 추천픽: (예: '수원 케이티 -3.5 핸디승 (마핸)', '삼성생명 +5.5 핸디승 (플핸)', '흥국생명 승 (역배 일반승)', '기준점 160.5 오버' 중 딱 1개만)
-6) 맨 마지막에 가장 확실한 2폴더 추천 조합 1개를 덧붙여 줘 (가능하면 핸디캡/일반승 + 언오버처럼 서로 다른 유형으로 구성).
+6) 2경기 이상일 때만 맨 마지막에 가장 확실한 2폴더 추천 조합 1개를 덧붙여 줘 (가능하면 핸디캡/일반승 + 언오버처럼 서로 다른 유형으로 구성).
 """
     prompt = f"{title}\n{guide}\n\n{rules}\n\n[경기 데이터]\n{data_block}"
     res = raw_gemini_call(sys_inst, prompt)
@@ -425,15 +449,34 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
 
 
 def run_domestic(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None:
-    wisetoto = fetch_via_jina("https://r.jina.ai/https://www.wisetoto.com/")
-    yna = fetch_google_news_rss(f"오늘의 경기 {now_kst.month}월 {now_kst.day}일 KBL WKBL V리그", max_items=8)
-    kbl_news = fetch_google_news_rss(f"{now_kst.month}월 {now_kst.day}일 프로농구 프로배구 프리뷰", max_items=6)
-    kleague = fetch_google_news_rss(f"{now_kst.month}월 {now_kst.day}일 K리그 J리그 AFC 챔피언스리그", max_items=5)
+    start_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_kst = now_kst.replace(hour=23, minute=59, second=59, microsecond=0)
 
-    data_block = f"[와이즈토토/프로토 정보]\n{wisetoto}\n\n[오늘의 경기 뉴스]\n{yna}\n\n[프리뷰 뉴스]\n{kbl_news}\n\n[아시아 축구]\n{kleague}"
+    asia_blocks = []
+    for sp, lg, label in [
+        ("soccer", "kor.1", "K리그1"),
+        ("soccer", "jpn.1", "J리그"),
+        ("soccer", "afc.champions", "AFC 챔피언스리그"),
+    ]:
+        d = fetch_espn_window(sp, lg, start_kst, end_kst)
+        if d:
+            asia_blocks.append(f"[{label}]\n{d}")
+    asia_text = "\n".join(asia_blocks) if asia_blocks else "오늘 열리는 K리그1/J리그/AFC 챔피언스리그 경기 없음."
+
+    wisetoto = fetch_via_jina("https://mw.wisetoto.com/?tab_type=proto", max_chars=10000)
+    yna_body = fetch_yonhap_today_schedule(now_kst)
+    kbl_news = fetch_google_news_rss(f"{now_kst.month}월 {now_kst.day}일 프로농구 프로배구 프리뷰", max_items=6)
+
+    data_block = (
+        f"[오늘 날짜(KST): {date_str}]\n\n"
+        f"[연합뉴스 오늘의 경기 공식 일정]\n{yna_body}\n\n"
+        f"[모바일 와이즈토토 프로토 목록]\n{wisetoto}\n\n"
+        f"[ESPN 아시아축구(K리그/J리그/ACL) 실시간 일정]\n{asia_text}\n\n"
+        f"[참고 프리뷰 뉴스]\n{kbl_news}"
+    )
     res = call_gemini(
         f"🏟️ [{date_str}] 국내 스포츠 및 아시아축구 분석 (프로토 기준)",
-        "베트맨 프로토 승부식 기준점과 일반승/핸디캡/언오버를 기준으로 오늘(KST) 열리는 KBL, WKBL, V리그(남/여) 및 K리그·J리그·ACL 경기를 분석하세요.",
+        "반드시 위 [연합뉴스 오늘의 경기 공식 일정], [와이즈토토 프로토 목록], [ESPN 아시아축구 일정]에서 오늘 날짜로 실제 확인된 경기만 분석하세요. 오늘 일정에 없는 배구·농구·축구는 절대 지어내지 마세요.",
         data_block,
     )
     send_telegram_message(res, chat_id)
