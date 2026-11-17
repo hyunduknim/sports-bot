@@ -11,7 +11,6 @@ from google.genai import types
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip().strip('"').strip("'")
-DEFAULT_CHAT_ID = "9112315353"
 HISTORY_FILE = "picks_history.json"
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
@@ -25,8 +24,58 @@ MODELS = [
 ]
 
 
+def load_history() -> list:
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def save_history(history: list) -> None:
+    try:
+        meta_items = [x for x in history if isinstance(x, dict) and x.get("meta") == "chat_id"][:1]
+        pick_items = [x for x in history if isinstance(x, dict) and x.get("meta") != "chat_id"][-45:]
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(meta_items + pick_items, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"History save error: {e}", flush=True)
+
+
 def resolve_telegram_chat_id() -> str:
-    return DEFAULT_CHAT_ID
+    bot_id = TELEGRAM_BOT_TOKEN.split(":")[0].strip() if ":" in TELEGRAM_BOT_TOKEN else ""
+    history = load_history()
+    for item in history:
+        if isinstance(item, dict) and item.get("meta") == "chat_id":
+            cid = str(item.get("chat_id", "")).strip()
+            if cid and cid != bot_id:
+                return cid
+
+    if TELEGRAM_BOT_TOKEN:
+        try:
+            r = requests.get(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates",
+                timeout=10,
+            )
+            if r.ok:
+                for item in reversed(r.json().get("result", [])):
+                    msg = item.get("message") or item.get("edited_message") or {}
+                    chat = msg.get("chat", {})
+                    frm = msg.get("from", {})
+                    cid = str(chat.get("id", "")).strip()
+                    if cid and cid != bot_id and not frm.get("is_bot", False) and chat.get("type") == "private":
+                        history.insert(0, {"meta": "chat_id", "chat_id": cid})
+                        save_history(history)
+                        print(f"Resolved human chat_id: {cid}", flush=True)
+                        return cid
+        except Exception as e:
+            print(f"getUpdates error: {e}", flush=True)
+
+    print("No human chat_id found. Send /start to @hyunduk_sportsbot first.", flush=True)
+    return ""
 
 
 def clean_telegram_text(text: str) -> str:
@@ -38,7 +87,7 @@ def clean_telegram_text(text: str) -> str:
 
 
 def send_telegram_message(text: str, chat_id: str) -> None:
-    if not TELEGRAM_BOT_TOKEN or not text:
+    if not TELEGRAM_BOT_TOKEN or not text or not chat_id:
         return
     cleaned = clean_telegram_text(text)
     paragraphs = cleaned.split("\n\n")
@@ -68,25 +117,6 @@ def send_telegram_message(text: str, chat_id: str) -> None:
             time.sleep(0.5)
         except Exception as e:
             print(f"Telegram send exception: {e}", flush=True)
-
-
-def load_history() -> list:
-    if not os.path.exists(HISTORY_FILE):
-        return []
-    try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else []
-    except Exception:
-        return []
-
-
-def save_history(history: list) -> None:
-    try:
-        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(history[-50:], f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"History save error: {e}", flush=True)
 
 
 def fetch_espn_window(sport: str, league: str, start_kst: datetime.datetime, end_kst: datetime.datetime) -> str:
@@ -278,6 +308,8 @@ def call_gemini(title: str, guide: str, data_block: str) -> str:
 
 
 def grade_previous_picks(now_kst: datetime.datetime, chat_id: str) -> None:
+    if not chat_id:
+        return
     history = load_history()
     pending = [item for item in history if item.get("status") == "pending"]
     if not pending:
@@ -412,6 +444,8 @@ def main() -> None:
     now_kst = datetime.datetime.now(KST)
     date_str = now_kst.strftime("%Y-%m-%d")
     chat_id = resolve_telegram_chat_id()
+    if not chat_id:
+        return
 
     grade_previous_picks(now_kst, chat_id)
 
