@@ -11,7 +11,6 @@ from google.genai import types
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip().strip('"').strip("'")
-DEFAULT_CHAT_ID = "9112315353"
 HISTORY_FILE = "picks_history.json"
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
@@ -223,17 +222,38 @@ def fetch_finished_scores(now_kst: datetime.datetime) -> str:
     return "\n".join(out)
 
 
-def fetch_via_jina(target_url: str, max_chars: int = 8000) -> str:
+def fetch_via_jina(target_url: str, max_chars: int = 40000) -> str:
     try:
         r = requests.get(
             f"https://r.jina.ai/{target_url}",
             headers={"User-Agent": "Mozilla/5.0"},
-            timeout=20,
+            timeout=25,
         )
         if r.ok and r.text:
             return r.text[:max_chars]
     except Exception:
         pass
+    return ""
+
+
+def fetch_wisetoto_today(now_kst: datetime.datetime) -> str:
+    today_mmdd = f"{now_kst.month:02d}.{now_kst.day:02d}"
+    for target in ["https://mw.wisetoto.com/", "https://www.wisetoto.com/"]:
+        raw = fetch_via_jina(target, max_chars=40000)
+        if not raw or today_mmdd not in raw:
+            continue
+        lines = raw.splitlines()
+        matched = []
+        i = 0
+        while i < len(lines):
+            if today_mmdd in lines[i]:
+                block = " | ".join(ln.strip() for ln in lines[i : i + 6] if ln.strip())
+                matched.append(block)
+                i += 4
+            else:
+                i += 1
+        if matched:
+            return "\n".join(matched[:80])
     return ""
 
 
@@ -254,26 +274,6 @@ def fetch_google_news_rss(query: str, max_items: int = 8) -> str:
         return "\n".join(items)
     except Exception:
         return ""
-
-
-def fetch_yonhap_today_schedule(now_kst: datetime.datetime) -> str:
-    q = urllib.parse.quote(f'"오늘의 경기" {now_kst.day}일 연합뉴스')
-    url = f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
-    try:
-        r = requests.get(url, timeout=15)
-        if not r.ok:
-            return ""
-        root = ET.fromstring(r.text)
-        for item in root.findall(".//item")[:5]:
-            title = item.findtext("title", "").strip()
-            link = item.findtext("link", "").strip()
-            if "오늘의 경기" in title and f"{now_kst.day}일" in title and link:
-                body = fetch_via_jina(link, max_chars=4000)
-                if body:
-                    return f"[{title}]\n{body}"
-    except Exception:
-        pass
-    return ""
 
 
 def raw_gemini_call(sys_inst: str, prompt: str) -> str:
@@ -463,20 +463,18 @@ def run_domestic(now_kst: datetime.datetime, date_str: str, chat_id: str) -> Non
             asia_blocks.append(f"[{label}]\n{d}")
     asia_text = "\n".join(asia_blocks) if asia_blocks else "오늘 열리는 K리그1/J리그/AFC 챔피언스리그 경기 없음."
 
-    wisetoto = fetch_via_jina("https://mw.wisetoto.com/?tab_type=proto", max_chars=10000)
-    yna_body = fetch_yonhap_today_schedule(now_kst)
-    kbl_news = fetch_google_news_rss(f"{now_kst.month}월 {now_kst.day}일 프로농구 프로배구 프리뷰", max_items=6)
+    wisetoto_today = fetch_wisetoto_today(now_kst)
+    kbl_news = fetch_google_news_rss(f"{now_kst.month}월 {now_kst.day}일 프로농구 프로배구 일정", max_items=8)
 
     data_block = (
         f"[오늘 날짜(KST): {date_str}]\n\n"
-        f"[연합뉴스 오늘의 경기 공식 일정]\n{yna_body}\n\n"
-        f"[모바일 와이즈토토 프로토 목록]\n{wisetoto}\n\n"
+        f"[오늘({now_kst.month:02d}.{now_kst.day:02d}) 프로토 승부식 공식 대상경기 및 배당]\n{wisetoto_today or '프로토 목록 미확인'}\n\n"
         f"[ESPN 아시아축구(K리그/J리그/ACL) 실시간 일정]\n{asia_text}\n\n"
-        f"[참고 프리뷰 뉴스]\n{kbl_news}"
+        f"[참고 뉴스]\n{kbl_news}"
     )
     res = call_gemini(
         f"🏟️ [{date_str}] 국내 스포츠 및 아시아축구 분석 (프로토 기준)",
-        "반드시 위 [연합뉴스 오늘의 경기 공식 일정], [와이즈토토 프로토 목록], [ESPN 아시아축구 일정]에서 오늘 날짜로 실제 확인된 경기만 분석하세요. 오늘 일정에 없는 배구·농구·축구는 절대 지어내지 마세요.",
+        "위 [프로토 승부식 공식 대상경기 및 배당]과 [ESPN 아시아축구 실시간 일정]에서 오늘(KST) 실제로 열리는 국내 농구(KBL/WKBL), 배구(V리그), 아시아축구만 분석하세요. 오늘 일정에 없는 종목/경기는 절대 지어내지 마세요.",
         data_block,
     )
     send_telegram_message(res, chat_id)
