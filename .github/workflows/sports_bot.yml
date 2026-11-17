@@ -7,13 +7,12 @@ on:
         description: '실행할 종목 선택'
         required: true
         type: choice
-        default: 'all_sports'
+        default: '07_nba_nhl'
         options:
-          - all_sports
-          - 01_overseas_soccer
           - 07_nba_nhl
           - 17_domestic
           - 13_weekend_domestic
+          - 01_overseas_soccer
           - 20_weekend_soccer
 
   schedule:
@@ -22,6 +21,9 @@ on:
     - cron: '2 16 * * 0-4'
     - cron: '2 4 * * 6,0'
     - cron: '2 11 * * 6,0'
+
+permissions:
+  contents: write
 
 jobs:
   send_analysis:
@@ -47,3 +49,13 @@ jobs:
           MANUAL_SLOT: ${{ github.event.inputs.slot }}
         run: |
           python send_analysis.py
+
+      - name: Save picks history
+        run: |
+          git config user.name "sports-bot"
+          git config user.email "sports-bot@users.noreply.github.com"
+          if [ -f picks_history.json ]; then
+            git add picks_history.json
+            git commit -m "Update picks history" || true
+            git push || true
+          fi
