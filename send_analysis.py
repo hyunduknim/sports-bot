@@ -33,19 +33,20 @@ def detect_current_slot(now_kst: datetime.datetime) -> str:
         return "01_overseas_soccer"
     if is_weekend and 18 <= hour <= 22:
         return "20_weekend_soccer"
-    return "all_sports"
+    return "07_nba_nhl"
 
 
-def fetch_espn_upcoming(sport_path: str, now_kst: datetime.datetime) -> list:
+def fetch_espn_window(sport_path: str, start_kst: datetime.datetime, end_kst: datetime.datetime) -> list:
     dates_to_check = [
-        (now_kst - datetime.timedelta(days=1)).strftime("%Y%m%d"),
-        now_kst.strftime("%Y%m%d"),
+        (start_kst - datetime.timedelta(days=1)).strftime("%Y%m%d"),
+        start_kst.strftime("%Y%m%d"),
+        end_kst.strftime("%Y%m%d"),
     ]
     seen_ids = set()
     lines = []
     kst_tz = pytz.timezone("Asia/Seoul")
 
-    for d_str in dates_to_check:
+    for d_str in dict.fromkeys(dates_to_check):
         url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard?dates={d_str}"
         try:
             r = requests.get(url, timeout=(5, 8))
@@ -56,21 +57,19 @@ def fetch_espn_upcoming(sport_path: str, now_kst: datetime.datetime) -> list:
                 ev_id = ev.get("id", "")
                 if ev_id in seen_ids:
                     continue
-                seen_ids.add(ev_id)
-
-                state = ev.get("status", {}).get("type", {}).get("state", "")
-                if state == "post":
-                    continue
 
                 date_iso = ev.get("date", "")
                 try:
                     dt = datetime.datetime.fromisoformat(date_iso.replace("Z", "+00:00")).astimezone(kst_tz)
-                    diff_hours = (dt - now_kst).total_seconds() / 3600.0
-                    if diff_hours < -2 or diff_hours > 24:
-                        continue
-                    date_kst = dt.strftime("%m/%d %H:%M")
                 except Exception:
-                    date_kst = date_iso
+                    continue
+
+                # 지정된 한국시간 구간(start_kst ~ end_kst) 밖의 경기는 무조건 제외 (내일 경기 원천 차단)
+                if not (start_kst <= dt <= end_kst):
+                    continue
+
+                seen_ids.add(ev_id)
+                date_kst = dt.strftime("%m/%d %H:%M")
 
                 comp = (ev.get("competitions") or [{}])[0]
                 odds_list = comp.get("odds") or []
@@ -231,34 +230,37 @@ def send_telegram_message(text: str, target_chat_id: str) -> None:
 
 
 def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None:
-    nba_games = fetch_espn_upcoming("basketball/nba", now_kst)
-    nhl_games = fetch_espn_upcoming("hockey/nhl", now_kst)
+    # 당일 아침 06:00 ~ 당일 오후 16:00 KST 사이에 시작하는 '오늘 경기만' 정확히 필터링
+    start_w = now_kst.replace(hour=6, minute=0, second=0, microsecond=0)
+    end_w = now_kst.replace(hour=16, minute=0, second=0, microsecond=0)
+
+    nba_games = fetch_espn_window("basketball/nba", start_w, end_w)
+    nhl_games = fetch_espn_window("hockey/nhl", start_w, end_w)
 
     if nba_games:
         nba_news = fetch_google_news_rss("NBA injury report preview odds today", max_items=5, lang="en")
-        block = "[오늘 예정된 NBA 경기 목록]\n" + "\n".join(nba_games)
+        block = f"[오늘({date_str}) NBA 경기 목록 - 총 {len(nba_games)}경기]\n" + "\n".join(nba_games)
         if nba_news:
             block += "\n\n[NBA 참고 소식]\n" + nba_news
         text = call_gemini(
-            f"🏀 [{date_str} NBA 전 경기(총 {len(nba_games)}경기) 예약분석]",
-            "오늘 열리는 NBA 전 경기를 한 경기도 빠짐없이 끝까지 분석해 줘.",
+            f"🏀 [{date_str} 오늘의 NBA 전 경기(총 {len(nba_games)}경기) 예약분석]",
+            "오늘 열리는 NBA 경기만 한 경기도 빠짐없이 끝까지 분석해 줘.",
             block,
             len(nba_games),
         )
         send_telegram_message(text, chat_id)
 
     if nba_games and nhl_games:
-        print("Cooling down 12s before NHL analysis...", flush=True)
         time.sleep(12)
 
     if nhl_games:
         nhl_news = fetch_google_news_rss("NHL starting goalies injury preview picks today", max_items=5, lang="en")
-        block = "[오늘 예정된 NHL 경기 목록]\n" + "\n".join(nhl_games)
+        block = f"[오늘({date_str}) NHL 경기 목록 - 총 {len(nhl_games)}경기]\n" + "\n".join(nhl_games)
         if nhl_news:
             block += "\n\n[NHL 참고 소식]\n" + nhl_news
         text = call_gemini(
-            f"🏒 [{date_str} NHL 전 경기(총 {len(nhl_games)}경기) 예약분석]",
-            "오늘 열리는 NHL 전 경기를 한 경기도 빠짐없이 끝까지 분석해 줘.",
+            f"🏒 [{date_str} 오늘의 NHL 전 경기(총 {len(nhl_games)}경기) 예약분석]",
+            "오늘 열리는 NHL 경기만 한 경기도 빠짐없이 끝까지 분석해 줘.",
             block,
             len(nhl_games),
         )
@@ -266,36 +268,49 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
 
 
 def run_domestic(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None:
+    # 당일 12:00 ~ 23:59 KST 사이에 시작하는 '오늘 국내/아시아 경기만' 필터링
+    start_w = now_kst.replace(hour=12, minute=0, second=0, microsecond=0)
+    end_w = now_kst.replace(hour=23, minute=59, second=59, microsecond=0)
     date_ko = f"{now_kst.month}월 {now_kst.day}일"
+
     sections = []
     count = 0
     for label, path in [("K리그1", "soccer/kor.1"), ("J리그", "soccer/jpn.1"), ("AFC챔피언스리그", "soccer/afc.champions")]:
-        g = fetch_espn_upcoming(path, now_kst)
+        g = fetch_espn_window(path, start_w, end_w)
         if g:
             count += len(g)
             sections.append(f"[{label}]\n" + "\n".join(g))
 
-    news_kbl = fetch_google_news_rss(f"{date_ko} 프로농구 KBL WKBL V리그 경기 일정 프리뷰", max_items=10)
-    news_proto = fetch_google_news_rss(f"프로토 승부식 {date_ko} KBL WKBL V리그 배당", max_items=8)
+    news_kbl = fetch_google_news_rss(f"\"{date_ko}\" 프로농구 OR 여자농구 OR 프로배구 경기 일정", max_items=10)
     if news_kbl:
-        sections.append(f"[{date_ko} 국내 농구/배구 뉴스 및 일정]\n{news_kbl}")
-    if news_proto:
-        sections.append(f"[프로토 관련 소식]\n{news_proto}")
+        sections.append(f"[{date_ko} 오늘 국내 농구/배구 뉴스 및 일정]\n{news_kbl}")
     wt = fetch_wisetoto_text()
     if len(wt) > 200:
-        sections.append(f"[와이즈토토 프로토 배당판]\n{wt}")
+        sections.append(f"[와이즈토토 프로토 배당판 (오늘 {date_ko} 경기만 분석할 것)]\n{wt}")
 
     block = "\n\n".join(sections) if sections else "오늘 예정된 국내 경기 데이터 없음"
     text = call_gemini(
-        f"🏐 [{date_str} 국내경기(KBL·WKBL·V리그) & 아시아축구 예약분석]",
-        "베트맨 프로토 기준점과 국내외 배당 흐름을 바탕으로 오늘 열리는 국내경기 및 아시아축구를 빠짐없이 분석해 줘.",
+        f"🏐 [{date_str} 오늘의 국내경기(KBL·WKBL·V리그) & 아시아축구 예약분석]",
+        f"내일 경기는 절대 포함하지 말고, 오직 오늘({date_ko}) 열리는 국내경기 및 아시아축구만 베트맨 프로토 기준으로 분석해 줘.",
         block,
         max(count, 2),
     )
     send_telegram_message(text, chat_id)
 
 
-def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None:
+def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str, is_weekend_slot: bool = False) -> None:
+    if is_weekend_slot:
+        # 주말 밤 8시(20:00) ~ 다음날 새벽 5시 30분(05:30) KST
+        start_w = now_kst.replace(hour=20, minute=0, second=0, microsecond=0)
+        end_w = (now_kst + datetime.timedelta(days=1)).replace(hour=5, minute=30, second=0, microsecond=0)
+        window_desc = "밤 20:00 ~ 내일 새벽 05:30"
+    else:
+        # 평일 새벽 1시(01:00) ~ 새벽 5시 50분(05:50) KST
+        base_day = now_kst + datetime.timedelta(days=1) if now_kst.hour >= 20 else now_kst
+        start_w = base_day.replace(hour=1, minute=0, second=0, microsecond=0)
+        end_w = base_day.replace(hour=5, minute=50, second=0, microsecond=0)
+        window_desc = "새벽 01:00 ~ 새벽 05:50"
+
     leagues = [
         ("EPL", "soccer/eng.1"),
         ("라리가", "soccer/esp.1"),
@@ -309,21 +324,21 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str)
     sections = []
     total_games = 0
     for label, path in leagues:
-        g = fetch_espn_upcoming(path, now_kst)
+        g = fetch_espn_window(path, start_w, end_w)
         if g:
             total_games += len(g)
             sections.append(f"[{label}]\n" + "\n".join(g))
 
-    soccer_news = fetch_google_news_rss("football prediction preview team news odds today", max_items=6, lang="en")
-    if soccer_news:
-        sections.append("[해외축구 프리뷰 소식]\n" + soccer_news)
+    if total_games == 0:
+        send_telegram_message(f"⚽ [{date_str} 해외축구 안내]\n오늘 {window_desc} 사이에 예정된 주요 해외축구 경기가 없습니다.", chat_id)
+        return
 
-    block = "\n\n".join(sections) if sections else "오늘 예정된 해외축구 경기 없음"
+    block = "\n\n".join(sections)
     text = call_gemini(
-        f"⚽ [{date_str} 해외축구 전 경기(총 {total_games}경기) 예약분석]",
-        "오늘 예정된 해외축구 전 경기를 빠짐없이 피나클·프로토 배당 흐름 기준으로 분석해 줘.",
+        f"⚽ [{date_str} 해외축구 ({window_desc}) 전 경기(총 {total_games}경기) 예약분석]",
+        f"오직 {window_desc} 사이에 열리는 총 {total_games}경기만 빠짐없이 분석해 줘.",
         block,
-        max(total_games, 1),
+        total_games,
     )
     send_telegram_message(text, chat_id)
 
@@ -340,11 +355,11 @@ def main():
         run_nba_nhl(now_kst, date_str, chat_id)
     elif slot in ("17_domestic", "13_weekend_domestic"):
         run_domestic(now_kst, date_str, chat_id)
-    elif slot in ("01_overseas_soccer", "20_weekend_soccer"):
-        run_overseas_soccer(now_kst, date_str, chat_id)
+    elif slot == "01_overseas_soccer":
+        run_overseas_soccer(now_kst, date_str, chat_id, is_weekend_slot=False)
+    elif slot == "20_weekend_soccer":
+        run_overseas_soccer(now_kst, date_str, chat_id, is_weekend_slot=True)
     else:
-        run_overseas_soccer(now_kst, date_str, chat_id)
-        time.sleep(10)
         run_nba_nhl(now_kst, date_str, chat_id)
         time.sleep(10)
         run_domestic(now_kst, date_str, chat_id)
