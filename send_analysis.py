@@ -11,6 +11,8 @@ from google.genai import types
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip().strip('"').strip("'")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip().strip('"').strip("'")
+SPORTSGAMEODDS_KEY = os.environ.get("SPORTSGAMEODDS_KEY", "").strip().strip('"').strip("'")
+STATSHAWK_KEY = os.environ.get("STATSHAWK_KEY", "").strip().strip('"').strip("'")
 HISTORY_FILE = "picks_history.json"
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
@@ -125,6 +127,71 @@ def send_telegram_message(text: str, chat_id: str) -> None:
             time.sleep(0.5)
         except Exception as e:
             print(f"Telegram send exception: {e}", flush=True)
+
+
+def fetch_sportsgameodds(league_ids: str, start_kst: datetime.datetime, end_kst: datetime.datetime) -> str:
+    if not SPORTSGAMEODDS_KEY:
+        return ""
+    url = "https://api.sportsgameodds.com/v2/events"
+    params = {
+        "leagueID": league_ids,
+        "oddsAvailable": "true",
+        "startsAfter": start_kst.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "startsBefore": end_kst.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "limit": 30,
+    }
+    try:
+        r = requests.get(url, headers={"x-api-key": SPORTSGAMEODDS_KEY}, params=params, timeout=15)
+        if not r.ok:
+            print(f"SportsGameOdds status {r.status_code}: {r.text[:200]}", flush=True)
+            return ""
+        events = r.json().get("data", [])
+        lines = []
+        for ev in events:
+            teams = ev.get("teams", {})
+            h_name = (teams.get("home", {}).get("names", {}) or {}).get("long", "Home")
+            a_name = (teams.get("away", {}).get("names", {}) or {}).get("long", "Away")
+            starts_at = (ev.get("status", {}) or {}).get("startsAt", "")
+            odds = ev.get("odds", {}) or {}
+            parts = []
+            for odd_key, label in [
+                ("points-home-game-ml-home", "홈승"),
+                ("points-away-game-ml-away", "원정승"),
+                ("points-home-game-sp-home", "홈핸디"),
+                ("points-all-game-ou-over", "기준점오버"),
+            ]:
+                o = odds.get(odd_key)
+                if not isinstance(o, dict):
+                    continue
+                pinn = (o.get("byBookmaker") or {}).get("pinnacle")
+                src = pinn if isinstance(pinn, dict) else o
+                val = src.get("odds") or src.get("bookOdds") or src.get("fairOdds") or ""
+                line = src.get("spread") or src.get("overUnder") or o.get("bookSpread") or o.get("bookOverUnder") or ""
+                tag = "피나클" if pinn else "시장컨센서스"
+                if val or line:
+                    parts.append(f"{label}({tag}:{line} {val})".strip())
+            if parts:
+                lines.append(f"- [{starts_at}] {h_name}(홈) vs {a_name}(원정) | " + ", ".join(parts))
+        return "\n".join(lines)
+    except Exception as e:
+        print(f"SportsGameOdds error: {e}", flush=True)
+        return ""
+
+
+def fetch_statshawk_ping() -> str:
+    if not STATSHAWK_KEY:
+        return ""
+    try:
+        r = requests.get(
+            "https://api.statshawk.ai/v1/competitions",
+            headers={"X-API-Key": STATSHAWK_KEY},
+            timeout=10,
+        )
+        if r.ok:
+            return "StatsHawk API 연결 정상"
+    except Exception:
+        pass
+    return ""
 
 
 def fetch_espn_window(sport: str, league: str, start_kst: datetime.datetime, end_kst: datetime.datetime) -> str:
@@ -297,7 +364,7 @@ def raw_gemini_call(sys_inst: str, prompt: str) -> str:
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=sys_inst,
-                        temperature=0.3,
+                        temperature=0.35,
                     ),
                 )
                 if response and response.text:
@@ -321,16 +388,16 @@ def call_gemini(title: str, guide: str, data_block: str) -> str:
 1) [경기 데이터]에서 오늘 날짜(KST)로 실제 열리는 것이 확인된 경기만 단 한 경기도 빠뜨리지 말고 순서대로 분석해 줘. (데이터에 없는 종목이나 없는 경기는 절대 지어내지 마!)
 2) 텔레그램 메시지용이므로 *, **, #, --- 같은 마크다운 기호와 빨간색 이모지(🔴, 🟥)는 절대 쓰지 마.
 3) 모든 팀명은 반드시 한국어 풀네임으로 적고 (홈) / (원정)과 한국시간(KST)을 꼭 표시해 줘.
-4) [핵심 베팅 전략 - 단일 유형 쏠림 절대 금지]
-- 하루 전체 추천픽이 언오버만, 또는 일반승만으로 몰리면 안 됩니다.
-- 분석 경기가 3경기 이상이면 [일반승(정배 또는 역배)], [핸디캡(마핸 또는 플핸)], [언오버(오버 또는 언더)] 3가지 유형이 각각 최소 1경기 이상 반드시 포함되어야 합니다.
-- 분석 경기가 2경기 이하이면 서로 다른 유형(예: 1경기 핸디캡 + 1경기 언오버)으로 섞으세요.
-- 1.4배 이하 저배당 일반승만 기계적으로 추천하지 말고, 전력 차가 크면 마핸(-핸디), 접전이나 이변 가능성이 보이면 플핸(+핸디)이나 역배 일반승을 적극 활용하세요.
+4) [핵심 베팅 전략 - 정배 편중 절대 금지 & 역배·플핸 적극 활용]
+- 모든 경기를 정배(정배 일반승·정배 마핸) 쪽으로만 고르는 것을 엄격히 금지합니다.
+- 5경기 이상이면 최소 2경기 이상, 3~4경기면 최소 1경기 이상은 반드시 [역배 일반승] 또는 [플핸(+핸디승)]을 추천픽으로 선정하세요.
+- 배당이 과도하게 쏠린 경기(예: -9.5 이상 큰 마핸)나 원정 강팀이 피로/백투백에 걸린 경기는 무리한 정배 마핸 대신 언더독 플핸(+핸디)이나 역배 승, 혹은 언오버로 돌리세요.
+- 전체 추천픽에 [일반승(정배/역배)], [핸디캡(마핸/플핸)], [언오버(오버/언더)] 3가지 유형이 고르게 섞여야 합니다.
 5) 각 경기마다 아래 양식대로 2~3문장의 핵심 분석 근거와 최종 추천픽 딱 1개만 작성해 줘.
 [종목 | 한국시간] 홈팀(홈) vs 원정팀(원정) | 배당/기준점 정보
 • 분석 근거: 양 팀 시즌 성적, 홈/원정 강약점, 백투백·부상 변수, 그리고 왜 이 픽(일반승/마핸/플핸/언오버/역배)이 가장 밸류가 높은지 2~3문장으로 명확하게 설명
-🌿 최종 추천픽: (예: '수원 케이티 -3.5 핸디승 (마핸)', '삼성생명 +5.5 핸디승 (플핸)', '흥국생명 승 (역배 일반승)', '기준점 160.5 오버' 중 딱 1개만)
-6) 2경기 이상일 때만 맨 마지막에 가장 확실한 2폴더 추천 조합 1개를 덧붙여 줘 (가능하면 핸디캡/일반승 + 언오버처럼 서로 다른 유형으로 구성).
+🌿 최종 추천픽: (예: '수원 케이티 -3.5 핸디승 (마핸)', '유타 재즈 +11.5 핸디승 (플핸)', '인디애나 페이서스 승 (역배 일반승)', '기준점 224.5 언더' 중 딱 1개만)
+6) 2경기 이상일 때만 맨 마지막에 가장 확실한 2폴더 추천 조합 1개를 덧붙여 줘 (정배+정배 조합 대신 플핸/마핸 + 언오버처럼 유형과 리스크를 분산해서 구성).
 """
     prompt = f"{title}\n{guide}\n\n{rules}\n\n[경기 데이터]\n{data_block}"
     res = raw_gemini_call(sys_inst, prompt)
@@ -396,26 +463,35 @@ def record_picks_to_history(slot: str, date_str: str, analysis_text: str) -> Non
 def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None:
     start_kst = now_kst.replace(hour=7, minute=0, second=0, microsecond=0)
     end_kst = now_kst.replace(hour=16, minute=0, second=0, microsecond=0)
+    fetch_statshawk_ping()
 
     if not already_sent(date_str, "NBA"):
-        nba_data = fetch_espn_window("basketball", "nba", start_kst, end_kst)
-        if nba_data:
+        nba_espn = fetch_espn_window("basketball", "nba", start_kst, end_kst)
+        nba_sgo = fetch_sportsgameodds("NBA", start_kst, end_kst)
+        if nba_espn:
+            nba_block = f"[ESPN 일정 및 전적]\n{nba_espn}"
+            if nba_sgo:
+                nba_block += f"\n\n[SportsGameOdds 해외/피나클 배당]\n{nba_sgo}"
             nba_res = call_gemini(
                 f"🏀 [{date_str}] 오늘의 NBA 전 경기 분석",
                 "피나클/해외 정배·핸디캡·언오버 기준점 및 국내 프로토 환산 관점으로 오늘(한국시간 07:00~16:00) 열리는 NBA 경기만 분석하세요.",
-                nba_data,
+                nba_block,
             )
             send_telegram_message(nba_res, chat_id)
             record_picks_to_history("NBA", date_str, nba_res)
             time.sleep(12)
 
     if not already_sent(date_str, "NHL"):
-        nhl_data = fetch_espn_window("hockey", "nhl", start_kst, end_kst)
-        if nhl_data:
+        nhl_espn = fetch_espn_window("hockey", "nhl", start_kst, end_kst)
+        nhl_sgo = fetch_sportsgameodds("NHL", start_kst, end_kst)
+        if nhl_espn:
+            nhl_block = f"[ESPN 일정 및 전적]\n{nhl_espn}"
+            if nhl_sgo:
+                nhl_block += f"\n\n[SportsGameOdds 해외/피나클 배당]\n{nhl_sgo}"
             nhl_res = call_gemini(
                 f"🏒 [{date_str}] 오늘의 NHL 전 경기 분석",
                 "피나클/해외 배당·핸디캡(퍽라인)·언오버 기준으로 오늘(한국시간 07:00~16:00) 열리는 NHL 경기만 분석하세요.",
-                nhl_data,
+                nhl_block,
             )
             send_telegram_message(nhl_res, chat_id)
             record_picks_to_history("NHL", date_str, nhl_res)
@@ -449,10 +525,15 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
     if not blocks:
         return
 
+    sgo_soccer = fetch_sportsgameodds("EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,UEFA_CHAMPIONS_LEAGUE", start_kst, end_kst)
+    data_block = "\n\n".join(blocks)
+    if sgo_soccer:
+        data_block += f"\n\n[SportsGameOdds 해외/피나클 배당]\n{sgo_soccer}"
+
     res = call_gemini(
         title,
         "피나클/해외 주요 리그 배당·핸디캡·언오버 기준으로 해당 시간대 해외축구 경기들을 분석하세요.",
-        "\n\n".join(blocks),
+        data_block,
     )
     send_telegram_message(res, chat_id)
     record_picks_to_history("해외축구", date_str, res)
