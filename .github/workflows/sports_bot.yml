@@ -47,6 +47,9 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '9112315353' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           MANUAL_SLOT: ${{ github.event.inputs.slot }}
+          SPORTSGAMEODDS_KEY: ${{ secrets.SPORTSGAMEODDS_KEY }}
+          STATSHAWK_KEY: ${{ secrets.STATSHAWK_KEY }}
+
         run: |
           python send_analysis.py
 
