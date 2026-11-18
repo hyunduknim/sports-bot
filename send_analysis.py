@@ -1,3 +1,4 @@
+```python
 import os
 import json
 import re
@@ -512,7 +513,8 @@ def main() -> None:
     elif 6 <= hour < 11:
         run_nba_nhl(now_kst, date_str, chat_id)
     elif 12 <= hour < 15:
-        run_domestic(now_kst, date_str, chat_id)
+        if is_weekend:
+            run_domestic(now_kst, date_str, chat_id)
     elif 16 <= hour < 19:
         run_domestic(now_kst, date_str, chat_id)
     elif 19 <= hour <= 23:
@@ -524,3 +526,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+```
