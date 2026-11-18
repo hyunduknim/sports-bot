@@ -45,6 +45,14 @@ def save_history(history: list) -> None:
         print(f"History save error: {e}", flush=True)
 
 
+def already_sent(date_str: str, slot: str) -> bool:
+    history = load_history()
+    return any(
+        isinstance(x, dict) and x.get("date") == date_str and x.get("slot") == slot
+        for x in history
+    )
+
+
 def resolve_telegram_chat_id() -> str:
     bot_id = TELEGRAM_BOT_TOKEN.split(":")[0].strip() if ":" in TELEGRAM_BOT_TOKEN else ""
     history = load_history()
@@ -373,14 +381,12 @@ def grade_previous_picks(now_kst: datetime.datetime, chat_id: str) -> None:
 
 def record_picks_to_history(slot: str, date_str: str, analysis_text: str) -> None:
     lines = [ln.strip() for ln in analysis_text.splitlines() if ("vs" in ln or "최종 추천픽" in ln)]
-    if not lines:
-        return
     history = load_history()
     history.append(
         {
             "date": date_str,
             "slot": slot,
-            "status": "pending",
+            "status": "pending" if lines else "empty",
             "picks_text": "\n".join(lines),
         }
     )
@@ -391,29 +397,33 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
     start_kst = now_kst.replace(hour=7, minute=0, second=0, microsecond=0)
     end_kst = now_kst.replace(hour=16, minute=0, second=0, microsecond=0)
 
-    nba_data = fetch_espn_window("basketball", "nba", start_kst, end_kst)
-    if nba_data:
-        nba_res = call_gemini(
-            f"🏀 [{date_str}] 오늘의 NBA 전 경기 분석",
-            "피나클/해외 정배·핸디캡·언오버 기준점 및 국내 프로토 환산 관점으로 오늘(한국시간 07:00~16:00) 열리는 NBA 경기만 분석하세요.",
-            nba_data,
-        )
-        send_telegram_message(nba_res, chat_id)
-        record_picks_to_history("NBA", date_str, nba_res)
-        time.sleep(12)
+    if not already_sent(date_str, "NBA"):
+        nba_data = fetch_espn_window("basketball", "nba", start_kst, end_kst)
+        if nba_data:
+            nba_res = call_gemini(
+                f"🏀 [{date_str}] 오늘의 NBA 전 경기 분석",
+                "피나클/해외 정배·핸디캡·언오버 기준점 및 국내 프로토 환산 관점으로 오늘(한국시간 07:00~16:00) 열리는 NBA 경기만 분석하세요.",
+                nba_data,
+            )
+            send_telegram_message(nba_res, chat_id)
+            record_picks_to_history("NBA", date_str, nba_res)
+            time.sleep(12)
 
-    nhl_data = fetch_espn_window("hockey", "nhl", start_kst, end_kst)
-    if nhl_data:
-        nhl_res = call_gemini(
-            f"🏒 [{date_str}] 오늘의 NHL 전 경기 분석",
-            "피나클/해외 배당·핸디캡(퍽라인)·언오버 기준으로 오늘(한국시간 07:00~16:00) 열리는 NHL 경기만 분석하세요.",
-            nhl_data,
-        )
-        send_telegram_message(nhl_res, chat_id)
-        record_picks_to_history("NHL", date_str, nhl_res)
+    if not already_sent(date_str, "NHL"):
+        nhl_data = fetch_espn_window("hockey", "nhl", start_kst, end_kst)
+        if nhl_data:
+            nhl_res = call_gemini(
+                f"🏒 [{date_str}] 오늘의 NHL 전 경기 분석",
+                "피나클/해외 배당·핸디캡(퍽라인)·언오버 기준으로 오늘(한국시간 07:00~16:00) 열리는 NHL 경기만 분석하세요.",
+                nhl_data,
+            )
+            send_telegram_message(nhl_res, chat_id)
+            record_picks_to_history("NHL", date_str, nhl_res)
 
 
 def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str, is_weekend: bool) -> None:
+    if already_sent(date_str, "해외축구"):
+        return
     if is_weekend:
         start_kst = now_kst.replace(hour=20, minute=0, second=0, microsecond=0)
         end_kst = (now_kst + datetime.timedelta(days=1)).replace(hour=6, minute=0, second=0, microsecond=0)
@@ -449,6 +459,8 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
 
 
 def run_domestic(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None:
+    if already_sent(date_str, "국내/아시아"):
+        return
     start_kst = now_kst.replace(hour=0, minute=0, second=0, microsecond=0)
     end_kst = now_kst.replace(hour=23, minute=59, second=59, microsecond=0)
 
