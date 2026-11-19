@@ -263,6 +263,7 @@ def fetch_finished_scores(now_kst: datetime.datetime) -> str:
         ("soccer", "afc.champions", "아챔"),
     ]
     dates = [
+        (now_kst - datetime.timedelta(days=2)).strftime("%Y%m%d"),
         (now_kst - datetime.timedelta(days=1)).strftime("%Y%m%d"),
         now_kst.strftime("%Y%m%d"),
     ]
@@ -406,12 +407,33 @@ def call_gemini(title: str, guide: str, data_block: str) -> str:
     return f"{title}\n(일시적 AI 서버 혼잡으로 실시간 수집된 경기 및 기준점 원본을 먼저 전달합니다)\n\n{data_block}"
 
 
+def is_slot_ready_to_grade(item: dict, now_kst: datetime.datetime) -> bool:
+    item_date = item.get("date", "")
+    slot = item.get("slot", "")
+    today_str = now_kst.strftime("%Y-%m-%d")
+    if item_date < today_str:
+        return True
+    if slot in ("NBA", "NHL"):
+        return now_kst.hour >= 16
+    if slot == "국내/아시아":
+        return now_kst.hour >= 22
+    if slot == "해외축구":
+        return now_kst.hour >= 9
+    return True
+
+
 def grade_previous_picks(now_kst: datetime.datetime, chat_id: str) -> None:
     if not chat_id:
         return
     history = load_history()
-    pending = [item for item in history if item.get("status") == "pending"]
-    if not pending:
+    ready_items = [
+        item for item in history
+        if isinstance(item, dict)
+        and item.get("status") == "pending"
+        and item.get("picks_text")
+        and is_slot_ready_to_grade(item, now_kst)
+    ]
+    if not ready_items:
         return
 
     scores_text = fetch_finished_scores(now_kst)
@@ -420,29 +442,34 @@ def grade_previous_picks(now_kst: datetime.datetime, chat_id: str) -> None:
     if not combined_scores:
         return
 
-    picks_summary = "\n\n".join(
-        f"[{p['date']} | {p['slot']}]\n{p['picks_text']}" for p in pending
-    )
     sys_inst = (
         "당신은 스포츠 경기 결과 채점관입니다. "
-        "제공된 [종료된 경기 최종 스코어]와 [이전 추천픽 목록]을 대조하여, 실제로 경기가 종료되어 최종 스코어가 확인된 경기만 정확히 채점하세요. "
-        "아직 경기 결과가 확인되지 않은 경기는 채점하지 마세요. 마크다운 기호(*, **, #)는 절대 쓰지 마세요."
+        "제공된 [종료된 경기 최종 스코어]와 [이전 추천픽 목록]을 대조하여, 해당 종목의 모든 종료 경기를 단 한 경기도 빠뜨리지 말고 정확히 채점하세요. "
+        "마크다운 기호(*, **, #)는 절대 쓰지 마세요."
     )
-    prompt = (
-        "아래 [이전 추천픽 목록] 중 [종료된 경기 최종 스코어]에서 결과가 확인된 경기만 골라서 채점해 줘.\n"
-        "양식:\n"
-        "📊 [경기 종료 자동 채점 결과]\n"
-        "• 홈팀 vs 원정팀 (최종 스코어) | 추천픽 -> 적중⭕ 또는 낙첨❌\n"
-        "마지막 줄에 총 전적(예: 5적중 2낙첨)을 요약해 줘. 결과가 하나도 확인되지 않았으면 정확히 'NONE'이라고만 답해 줘.\n\n"
-        f"[이전 추천픽 목록]\n{picks_summary}\n\n"
-        f"[종료된 경기 최종 스코어]\n{combined_scores}"
-    )
-    graded = raw_gemini_call(sys_inst, prompt)
-    if graded and graded.strip() != "NONE" and ("적중⭕" in graded or "낙첨❌" in graded):
-        send_telegram_message(graded, chat_id)
-        for item in history:
-            if item.get("status") == "pending":
-                item["status"] = "graded"
+
+    changed = False
+    for item in ready_items:
+        slot = item.get("slot", "")
+        dt = item.get("date", "")
+        picks_text = item.get("picks_text", "")
+        prompt = (
+            f"아래 [{dt} | {slot}] 추천픽 목록을 [종료된 경기 최종 스코어]와 대조해서, 결과가 확인된 경기를 빠짐없이 채점해 줘.\n"
+            "양식:\n"
+            f"📊 [{dt} {slot} 경기 종료 자동 채점 결과]\n"
+            "• 홈팀 vs 원정팀 (최종 스코어) | 추천픽 -> 적중⭕ 또는 낙첨❌\n"
+            "마지막 줄에 총 전적(예: 5적중 2낙첨)을 요약해 줘. 결과가 하나도 확인되지 않았으면 정확히 'NONE'이라고만 답해 줘.\n\n"
+            f"[이전 추천픽 목록]\n{picks_text}\n\n"
+            f"[종료된 경기 최종 스코어]\n{combined_scores}"
+        )
+        graded = raw_gemini_call(sys_inst, prompt)
+        if graded and graded.strip() != "NONE" and ("적중⭕" in graded or "낙첨❌" in graded):
+            send_telegram_message(graded, chat_id)
+            item["status"] = "graded"
+            changed = True
+            time.sleep(5)
+
+    if changed:
         save_history(history)
 
 
