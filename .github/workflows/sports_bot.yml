@@ -1,26 +1,13 @@
 name: Hyunduk Sports Scheduled Telegram Bot
 
 on:
-  workflow_dispatch:
-    inputs:
-      slot:
-        description: '실행할 종목 선택'
-        required: true
-        type: choice
-        default: '07_nba_nhl'
-        options:
-          - 07_nba_nhl
-          - 17_domestic
-          - 13_weekend_domestic
-          - 01_overseas_soccer
-          - 20_weekend_soccer
-
   schedule:
+    - cron: '2 16 * * 1-5'
     - cron: '2 22 * * *'
     - cron: '2 8 * * 1-5'
-    - cron: '2 16 * * 0-4'
-    - cron: '2 4 * * 6,0'
-    - cron: '2 11 * * 6,0'
+    - cron: '2 4 * * 0,6'
+    - cron: '2 11 * * 0,6'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -37,28 +24,22 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install dependencies and Korean fonts
         run: |
-          pip install requests google-genai pytz
+          sudo apt-get update && sudo apt-get install -y fonts-nanum
+          pip install requests google-genai matplotlib
 
       - name: Run Scheduled Sports Analyzer & Send to Telegram
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || '9112315353' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          MANUAL_SLOT: ${{ github.event.inputs.slot }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           SPORTSGAMEODDS_KEY: ${{ secrets.SPORTSGAMEODDS_KEY }}
           STATSHAWK_KEY: ${{ secrets.STATSHAWK_KEY }}
-
-        run: |
-          python send_analysis.py
+        run: python send_analysis.py
 
       - name: Save picks history
         run: |
           git config user.name "sports-bot"
           git config user.email "sports-bot@users.noreply.github.com"
-          if [ -f picks_history.json ]; then
-            git add picks_history.json
-            git commit -m "Update picks history" || true
-            git push || true
-          fi
+          git add picks_history.json
+          git diff --staged --quiet || (git commit -m "Update picks history" && git push)
