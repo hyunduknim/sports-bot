@@ -1,4 +1,6 @@
 import os
+import io
+import html
 import json
 import re
 import time
@@ -96,24 +98,48 @@ def clean_telegram_text(text: str) -> str:
     return text.strip()
 
 
-def send_telegram_message(text: str, chat_id: str) -> None:
+def format_telegram_html(text: str) -> str:
+    cleaned = clean_telegram_text(text)
+    escaped = html.escape(cleaned)
+    out_lines = []
+    for ln in escaped.splitlines():
+        s = ln.strip()
+        if not s:
+            out_lines.append("")
+            continue
+        if s.startswith(("🏀", "🏒", "⚽", "🏟️", "📊")):
+            out_lines.append(f"<b>{s}</b>")
+        elif s.startswith("[") and "vs" in s:
+            out_lines.append(f"<b>{s}</b>")
+        elif "최종 추천픽" in s:
+            out_lines.append(f"<blockquote><b>{s}</b></blockquote>")
+        elif s.startswith(("🎯", "💎")):
+            out_lines.append(f"<b>{s}</b>")
+        elif s.startswith(("- 1폴더:", "- 2폴더:", "1폴더:", "2폴더:")):
+            out_lines.append(f"<code>{s}</code>")
+        else:
+            out_lines.append(ln)
+    return "\n".join(out_lines)
+
+
+def send_telegram_message(text: str, chat_id: str, use_html: bool = True) -> None:
     if not TELEGRAM_BOT_TOKEN or not text or not chat_id:
         return
-    cleaned = clean_telegram_text(text)
-    paragraphs = cleaned.split("\n\n")
+    formatted = format_telegram_html(text) if use_html else clean_telegram_text(text)
+    paragraphs = formatted.split("\n\n")
     chunks = []
     current = ""
     for p in paragraphs:
-        if len(current) + len(p) + 2 <= 3800:
+        if len(current) + len(p) + 2 <= 3700:
             current = f"{current}\n\n{p}".strip() if current else p
         else:
             if current:
                 chunks.append(current)
-            if len(p) <= 3800:
+            if len(p) <= 3700:
                 current = p
             else:
-                for i in range(0, len(p), 3800):
-                    chunks.append(p[i : i + 3800])
+                for i in range(0, len(p), 3700):
+                    chunks.append(p[i : i + 3700])
                 current = ""
     if current:
         chunks.append(current)
@@ -121,12 +147,215 @@ def send_telegram_message(text: str, chat_id: str) -> None:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     for chunk in chunks:
         try:
-            r = requests.post(url, json={"chat_id": chat_id, "text": chunk}, timeout=15)
+            payload = {"chat_id": chat_id, "text": chunk}
+            if use_html:
+                payload["parse_mode"] = "HTML"
+            r = requests.post(url, json=payload, timeout=15)
+            if not r.ok and use_html:
+                plain_chunk = re.sub(r"<[^>]+>", "", chunk)
+                plain_chunk = html.unescape(plain_chunk)
+                r = requests.post(url, json={"chat_id": chat_id, "text": plain_chunk}, timeout=15)
             if not r.ok:
                 print(f"Telegram error: {r.status_code} {r.text}", flush=True)
             time.sleep(0.5)
         except Exception as e:
             print(f"Telegram send exception: {e}", flush=True)
+
+
+def send_telegram_photo(img_bytes: bytes, caption: str, chat_id: str) -> None:
+    if not TELEGRAM_BOT_TOKEN or not img_bytes or not chat_id:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    try:
+        files = {"photo": ("analysis_chart.png", img_bytes, "image/png")}
+        data = {"chat_id": chat_id, "caption": clean_telegram_text(caption)[:900]}
+        r = requests.post(url, data=data, files=files, timeout=25)
+        if not r.ok:
+            print(f"Telegram photo error: {r.status_code} {r.text}", flush=True)
+        time.sleep(0.5)
+    except Exception as e:
+        print(f"Telegram photo exception: {e}", flush=True)
+
+
+def build_summary_card_image(title: str, chart_data: dict) -> bytes:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib import font_manager
+        from matplotlib.patches import Patch
+    except Exception as e:
+        print(f"matplotlib unavailable: {e}", flush=True)
+        return b""
+
+    font_paths = [
+        "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    ]
+    chosen_font = None
+    for fp in font_paths:
+        if os.path.exists(fp):
+            font_manager.fontManager.addfont(fp)
+            chosen_font = font_manager.FontProperties(fname=fp).get_name()
+            break
+    if chosen_font:
+        plt.rcParams["font.family"] = chosen_font
+    plt.rcParams["axes.unicode_minus"] = False
+
+    picks = chart_data.get("picks") or []
+    combos = chart_data.get("combos") or []
+    if not picks and not combos:
+        return b""
+
+    bg_color = "#0F172A"
+    card_color = "#1E293B"
+    text_color = "#F8FAFC"
+    sub_color = "#CBD5E1"
+    type_colors = {
+        "일반승": "#10B981",
+        "마핸": "#0EA5E9",
+        "플핸": "#A855F7",
+        "역배": "#EC4899",
+        "언오버": "#F59E0B",
+    }
+
+    n_picks = max(len(picks), 1)
+    n_combos = len(combos)
+    fig_h = max(6.0, 2.2 + n_picks * 0.58 + (2.8 if n_combos else 0.4))
+    fig = plt.figure(figsize=(10.5, fig_h), dpi=180, facecolor=bg_color)
+
+    if n_combos:
+        gs = fig.add_gridspec(2, 1, height_ratios=[max(2.6, n_picks * 0.65), 2.5], hspace=0.35)
+        ax_bar = fig.add_subplot(gs[0])
+        ax_tbl = fig.add_subplot(gs[1])
+    else:
+        ax_bar = fig.add_subplot(111)
+        ax_tbl = None
+
+    clean_title = re.sub(r"[^\w\s\[\]\-\(\)\.\:\|가-힣]", "", title).strip()
+    fig.suptitle(clean_title, color=text_color, fontsize=15, fontweight="bold", y=0.97)
+
+    ax_bar.set_facecolor(card_color)
+    if picks:
+        labels = []
+        scores = []
+        colors = []
+        pick_texts = []
+        for item in picks[:12]:
+            match_lbl = str(item.get("match", ""))[:22]
+            pick_lbl = str(item.get("pick", ""))[:24]
+            ptype = str(item.get("type", "일반승"))
+            conf = int(item.get("confidence", 70) or 70)
+            conf = max(45, min(95, conf))
+            labels.append(match_lbl)
+            scores.append(conf)
+            pick_texts.append(f"{pick_lbl} ({conf}%)")
+            c = "#10B981"
+            for k, v in type_colors.items():
+                if k in ptype or k in pick_lbl:
+                    c = v
+                    break
+            colors.append(c)
+
+        y_pos = list(range(len(labels)))[::-1]
+        bars = ax_bar.barh(y_pos, scores, color=colors, height=0.62, edgecolor="#334155", linewidth=0.8)
+        ax_bar.set_yticks(y_pos)
+        ax_bar.set_yticklabels(labels, color=text_color, fontsize=9.5, fontweight="bold")
+        ax_bar.set_xlim(0, 118)
+        ax_bar.set_xlabel("AI 밸류 신뢰도 (%)", color=sub_color, fontsize=9.5)
+        ax_bar.tick_params(axis="x", colors=sub_color, labelsize=8.5)
+        ax_bar.grid(axis="x", linestyle="--", alpha=0.2, color="#94A3B8")
+        for spine in ("top", "right"):
+            ax_bar.spines[spine].set_visible(False)
+        for spine in ("left", "bottom"):
+            ax_bar.spines[spine].set_color("#475569")
+
+        for bar, ptxt in zip(bars, pick_texts):
+            w = bar.get_width()
+            ax_bar.text(
+                w + 1.5,
+                bar.get_y() + bar.get_height() / 2,
+                ptxt,
+                va="center",
+                ha="left",
+                color=text_color,
+                fontsize=9,
+                fontweight="bold",
+            )
+
+        legend_handles = [Patch(facecolor=v, label=k) for k, v in type_colors.items()]
+        ax_bar.legend(
+            handles=legend_handles,
+            loc="upper right",
+            ncol=5,
+            frameon=False,
+            fontsize=8.5,
+            labelcolor=sub_color,
+            bbox_to_anchor=(1.0, 1.15),
+        )
+
+    if ax_tbl is not None and combos:
+        ax_tbl.set_facecolor(bg_color)
+        ax_tbl.axis("off")
+        ax_tbl.set_title("추천 2폴더 조합표", color="#38BDF8", fontsize=12.5, fontweight="bold", pad=10, loc="left")
+
+        col_labels = ["조합 구분", "1폴더 픽", "2폴더 픽", "핵심 포인트"]
+        cell_text = []
+        row_colors = []
+        for idx, cb in enumerate(combos[:3]):
+            cname = str(cb.get("name", f"조합 {idx+1}"))[:14]
+            leg1 = str(cb.get("leg1", ""))[:26]
+            leg2 = str(cb.get("leg2", ""))[:26]
+            note = str(cb.get("note", ""))[:30]
+            cell_text.append([cname, leg1, leg2, note])
+            row_colors.append("#1E293B" if idx % 2 == 0 else "#162032")
+
+        table = ax_tbl.table(
+            cellText=cell_text,
+            colLabels=col_labels,
+            cellLoc="center",
+            loc="center",
+            colWidths=[0.17, 0.28, 0.28, 0.27],
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(9.2)
+        table.scale(1.0, 2.2)
+
+        for (row, col), cell in table.get_celld().items():
+            cell.set_edgecolor("#334155")
+            if row == 0:
+                cell.set_facecolor("#0284C7")
+                cell.set_text_props(color="#FFFFFF", fontweight="bold")
+            else:
+                cell.set_facecolor(row_colors[row - 1])
+                if col == 0:
+                    badge_col = "#10B981" if row == 1 else "#A855F7"
+                    cell.set_text_props(color=badge_col, fontweight="bold")
+                elif col in (1, 2):
+                    cell.set_text_props(color="#FDE047", fontweight="bold")
+                else:
+                    cell.set_text_props(color=sub_color)
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", facecolor=bg_color, bbox_inches="tight", pad_inches=0.35)
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def extract_chart_json(raw_text: str) -> tuple[str, dict]:
+    m = re.search(r"===CHART_JSON_START===\s*(\{.*?\})\s*===CHART_JSON_END===", raw_text, re.DOTALL)
+    if not m:
+        return raw_text, {}
+    clean_body = (raw_text[: m.start()] + raw_text[m.end() :]).strip()
+    try:
+        parsed = json.loads(m.group(1))
+        return clean_body, parsed if isinstance(parsed, dict) else {}
+    except Exception as e:
+        print(f"Chart JSON parse error: {e}", flush=True)
+        return clean_body, {}
 
 
 def fetch_sportsgameodds(league_ids: str, start_kst: datetime.datetime, end_kst: datetime.datetime) -> str:
@@ -370,25 +599,28 @@ def fetch_via_jina(target_url: str, max_chars: int = 40000) -> str:
     return ""
 
 
-def fetch_wisetoto_today(now_kst: datetime.datetime) -> str:
-    today_mmdd = f"{now_kst.month:02d}.{now_kst.day:02d}"
+def fetch_wisetoto_by_mmdd(target_mmdd: str) -> str:
     for target in ["https://mw.wisetoto.com/", "https://www.wisetoto.com/"]:
-        raw = fetch_via_jina(target, max_chars=40000)
-        if not raw or today_mmdd not in raw:
+        raw = fetch_via_jina(target, max_chars=45000)
+        if not raw or target_mmdd not in raw:
             continue
         lines = raw.splitlines()
         matched = []
         i = 0
         while i < len(lines):
-            if today_mmdd in lines[i]:
+            if target_mmdd in lines[i]:
                 block = " | ".join(ln.strip() for ln in lines[i : i + 6] if ln.strip())
                 matched.append(block)
                 i += 4
             else:
                 i += 1
         if matched:
-            return "\n".join(matched[:80])
+            return "\n".join(matched[:100])
     return ""
+
+
+def fetch_wisetoto_today(now_kst: datetime.datetime) -> str:
+    return fetch_wisetoto_by_mmdd(f"{now_kst.month:02d}.{now_kst.day:02d}")
 
 
 def fetch_google_news_rss(query: str, max_items: int = 8) -> str:
@@ -427,7 +659,7 @@ def raw_gemini_call(sys_inst: str, prompt: str) -> str:
                     ),
                 )
                 if response and response.text:
-                    return clean_telegram_text(response.text)
+                    return response.text.strip()
             except Exception as e:
                 last_err = e
                 print(f"Round {round_idx} | Model {model_name} failed: {e}", flush=True)
@@ -436,59 +668,65 @@ def raw_gemini_call(sys_inst: str, prompt: str) -> str:
     return ""
 
 
-def call_gemini(title: str, guide: str, data_block: str, detailed_pro: bool = False) -> str:
+def call_gemini(title: str, guide: str, data_block: str, detailed_pro: bool = False) -> tuple[str, dict]:
     sys_inst = (
         "당신은 최상위 1% 프로 스포츠 베팅 퀀트·애널리스트입니다. "
         "반드시 100% 한국어로만 작성하고 영어 문장이나 영어 약어 팀명(HOU, MIA 등)을 절대 쓰지 마세요. "
         "마크다운 기호(*, **, #)와 빨간색 이모지(🔴, 🟥)를 절대 사용하지 마세요. "
         "절대로 [경기 데이터]에 없는 가상의 경기나 다른 날짜의 경기를 지어내지 마세요. 오직 오늘 실제로 열리는 것이 확인된 경기만 분석하세요."
     )
-    if detailed_pro:
-        rules = """
-1) [경기 데이터]에서 오늘 날짜(KST)로 실제 열리는 것이 확인된 모든 경기를 단 한 경기도 빠뜨리지 말고 순서대로 심층 분석해 줘.
-2) 텔레그램 메시지용이므로 *, **, #, --- 같은 마크다운 기호와 빨간색 이모지(🔴, 🟥)는 절대 쓰지 마.
-3) 모든 팀명은 반드시 한국어 풀네임으로 적고 (홈) / (원정)과 한국시간(KST)을 꼭 표시해 줘.
+    rules = """
+1) [경기 데이터]에서 오늘 날짜(KST)로 실제 열리는 것이 확인된 모든 경기를 빠짐없이 분석하되, 모바일에서 한눈에 쏙 들어오도록 군더더기 없이 간결하게 작성하세요.
+2) 텔레그램 메시지용이므로 *, **, #, --- 같은 마크다운 기호와 빨간색 이모지(🔴, 🟥)는 절대 쓰지 마세요.
+3) 모든 팀명은 100% 한국어 풀네임으로 적고 (홈) / (원정)과 한국시간(KST)을 표시하세요.
 4) [핵심 베팅 전략 - 정배 편중 절대 금지 & 역배·플핸 적극 활용]
-- 모든 경기를 정배(정배 일반승·정배 마핸) 쪽으로만 고르는 것을 엄격히 금지합니다.
-- 5경기 이상이면 최소 2경기 이상, 3~4경기면 최소 1경기 이상은 반드시 [역배 일반승] 또는 [플핸(+핸디승)]을 추천픽으로 선정하세요.
-- 배당이 과도하게 쏠린 경기(예: NBA -9.5 이상 마핸, NHL -1.5 무리한 퍽라인)나 강팀의 원정 피로·백투백·부상 변수가 보이면 언더독 플핸(+핸디), 역배 승, 또는 언오버로 밸류를 잡으세요.
+- 5경기 이상이면 최소 2경기 이상, 3~4경기면 최소 1경기 이상은 반드시 [역배 일반승] 또는 [플핸(+핸디승)]을 선정하세요.
 - 전체 추천픽에 [일반승(정배/역배)], [핸디캡(마핸/플핸)], [언오버(오버/언더)] 3가지 유형이 고르게 섞여야 합니다.
-5) 각 경기마다 아래 [고퀄리티 심층 양식]으로 정확하게 작성해 줘 (수치·홈/원정 성적·득실차·배당 흐름을 구체적으로 인용):
+- 픽 유형 배지: 일반승/마핸은 🟢, 언오버는 🟡, 역배/플핸은 🟣 을 최종 추천픽 끝에 붙이세요.
+5) 각 경기는 딱 아래 4줄로만 깔끔하게 요약하세요 (긴 문단 금지):
 [종목 | 한국시간] 홈팀(홈) vs 원정팀(원정)
-• 라인/배당: 피나클/해외 기준 핸디캡 및 언오버 기준점 (국내 프로토 환산 관점 포함)
-• 핵심 지표: 양 팀 시즌·홈/원정 성적, 최근 10경기 흐름, 평균 득실점·득실차 비교
-• 매치업 & 변수: 공수 페이스(템포), 백투백·원정 피로도, 부상/결장 뉴스 및 선발 골리(NHL) 등 승부처 분석
-• 밸류 근거: 왜 일반승 대신 이 라인(마핸/플핸/언오버/역배)이 가장 기대값이 높은지 핵심 정리
-🌿 최종 추천픽: (예: '유타 재즈 +11.5 핸디승 (플핸)' 또는 '보스턴 셀틱스 승 (역배 일반승)' 등 딱 1개만)
-6) 맨 마지막에 [디테일 추천 조합 (2개 세트)]을 반드시 아래처럼 구분해서 작성해 줘 (2경기 이상일 때):
-🎯 [조합 1 · 안정형 주력 2폴더]
-- 1폴더: 경기명 + 추천픽 (선정 이유 1줄)
-- 2폴더: 경기명 + 추천픽 (선정 이유 1줄)
-- 조합 시너지 & 리스크 관리: 두 경기를 묶었을 때의 강점과 주의 변수 1~2줄
+• 라인: 피나클/프로토 핸디캡·기준점
+• 핵심: 시즌/홈·원정 성적, 득실차, 부상·일정 등 핵심 근거만 1~2문장으로 압축
+🌿 최종 추천픽: (예: 유타 재즈 +11.5 핸디승 (플핸) 🟣)
 
-💎 [조합 2 · 고배당 밸류 2폴더 (역배/플핸 포함)]
-- 1폴더: 경기명 + 추천픽 (역배 또는 플핸 포함, 선정 이유 1줄)
-- 2폴더: 경기명 + 추천픽 (핸디캡 또는 언오버, 선정 이유 1줄)
-- 조합 시너지 & 기대값 포인트: 정배 편중을 피한 고배당 공략 포인트 1~2줄
-"""
-    else:
-        rules = """
-1) [경기 데이터]에서 오늘 날짜(KST)로 실제 열리는 것이 확인된 경기만 단 한 경기도 빠뜨리지 말고 순서대로 분석해 줘. (데이터에 없는 종목이나 없는 경기는 절대 지어내지 마!)
-2) 텔레그램 메시지용이므로 *, **, #, --- 같은 마크다운 기호와 빨간색 이모지(🔴, 🟥)는 절대 쓰지 마.
-3) 모든 팀명은 반드시 한국어 풀네임으로 적고 (홈) / (원정)과 한국시간(KST)을 꼭 표시해 줘.
-4) [핵심 베팅 전략 - 정배 편중 절대 금지 & 역배·플핸 적극 활용]
-- 모든 경기를 정배 쪽으로만 고르지 말고, 3경기 이상이면 최소 1경기 이상은 반드시 [역배 일반승] 또는 [플핸(+핸디승)]을 포함하며 [일반승/핸디캡/언오버]를 고르게 섞으세요.
-5) 각 경기마다 아래 양식대로 핵심 분석 근거와 최종 추천픽 딱 1개만 작성해 줘.
-[종목 | 한국시간] 홈팀(홈) vs 원정팀(원정) | 배당/기준점 정보
-• 분석 근거: 양 팀 시즌 성적, 홈/원정 강약점, 부상·일정 변수, 그리고 왜 이 픽(일반승/마핸/플핸/언오버/역배)이 가장 밸류가 높은지 2~3문장으로 명확하게 설명
-🌿 최종 추천픽: (예: '수원 케이티 -3.5 핸디승 (마핸)', '삼성생명 +5.5 핸디승 (플핸)', '흥국생명 승 (역배 일반승)', '기준점 160.5 오버' 중 딱 1개만)
-6) 2경기 이상일 때만 맨 마지막에 [안정형 주력 2폴더]와 [고배당 밸류 2폴더]를 선정 이유와 함께 작성해 줘.
+6) 맨 마지막에 아래 2개 조합을 깔끔하게 정리하세요 (2경기 이상일 때):
+🎯 [조합 1 · 안정형 주력 2폴더]
+- 1폴더: 팀명 + 추천픽
+- 2폴더: 팀명 + 추천픽
+• 포인트: 선정 이유 1줄
+
+💎 [조합 2 · 고배당 밸류 2폴더]
+- 1폴더: 팀명 + 추천픽 (역배 또는 플핸)
+- 2폴더: 팀명 + 추천픽
+• 포인트: 선정 이유 1줄
+
+7) 답변 맨 마지막에는 반드시 아래 형식의 순수 JSON 블록을 덧붙여 차트와 컬러 조합표를 만들 수 있게 하세요 (JSON 안에는 주석이나 마크다운 금지):
+===CHART_JSON_START===
+{
+  "picks": [
+    {"match": "홈팀 vs 원정팀", "pick": "추천픽 요약", "type": "일반승|마핸|플핸|역배|언오버 중 하나", "confidence": 78}
+  ],
+  "combos": [
+    {"name": "안정형 주력", "leg1": "1폴더 요약", "leg2": "2폴더 요약", "note": "핵심 포인트"},
+    {"name": "고배당 밸류", "leg1": "1폴더 요약", "leg2": "2폴더 요약", "note": "핵심 포인트"}
+  ]
+}
+===CHART_JSON_END===
 """
     prompt = f"{title}\n{guide}\n\n{rules}\n\n[경기 데이터]\n{data_block}"
-    res = raw_gemini_call(sys_inst, prompt)
-    if res:
-        return res
-    return f"{title}\n(일시적 AI 서버 혼잡으로 실시간 수집된 경기 및 기준점 원본을 먼저 전달합니다)\n\n{data_block}"
+    raw_res = raw_gemini_call(sys_inst, prompt)
+    if raw_res:
+        body, chart_json = extract_chart_json(raw_res)
+        return clean_telegram_text(body), chart_json
+    return f"{title}\n(일시적 AI 서버 혼잡으로 실시간 수집된 경기 및 기준점 원본을 먼저 전달합니다)\n\n{data_block}", {}
+
+
+def deliver_analysis_with_visual(title: str, body: str, chart_json: dict, chat_id: str) -> None:
+    send_telegram_message(body, chat_id, use_html=True)
+    if chart_json:
+        img_bytes = build_summary_card_image(title, chart_json)
+        if img_bytes:
+            send_telegram_photo(img_bytes, f"📊 {title} — 밸류 신뢰도 차트 & 컬러 조합표", chat_id)
 
 
 def is_slot_ready_to_grade(item: dict, now_kst: datetime.datetime) -> bool:
@@ -521,8 +759,18 @@ def grade_previous_picks(now_kst: datetime.datetime, chat_id: str) -> None:
         return
 
     scores_text = fetch_finished_scores(now_kst)
-    dom_news = fetch_google_news_rss(f"{now_kst.month}월 {now_kst.day}일 프로농구 프로배구 경기 결과 스코어", max_items=10)
-    combined_scores = f"{scores_text}\n\n[국내 경기 결과 뉴스]\n{dom_news}".strip()
+    yest_kst = now_kst - datetime.timedelta(days=1)
+    wt_yest = fetch_wisetoto_by_mmdd(f"{yest_kst.month:02d}.{yest_kst.day:02d}")
+    wt_today = fetch_wisetoto_by_mmdd(f"{now_kst.month:02d}.{now_kst.day:02d}")
+    dom_news_yest = fetch_google_news_rss(f"{yest_kst.month}월 {yest_kst.day}일 프로농구 프로배구 경기 결과", max_items=10)
+    dom_news_today = fetch_google_news_rss(f"{now_kst.month}월 {now_kst.day}일 프로농구 프로배구 경기 결과", max_items=8)
+    combined_scores = (
+        f"{scores_text}\n\n"
+        f"[와이즈토토 프로토 공식 경기 결과 ({yest_kst.month:02d}.{yest_kst.day:02d})]\n{wt_yest}\n\n"
+        f"[와이즈토토 프로토 공식 경기 결과 ({now_kst.month:02d}.{now_kst.day:02d})]\n{wt_today}\n\n"
+        f"[국내 경기 결과 뉴스 ({yest_kst.month}월 {yest_kst.day}일)]\n{dom_news_yest}\n\n"
+        f"[국내 경기 결과 뉴스 ({now_kst.month}월 {now_kst.day}일)]\n{dom_news_today}"
+    ).strip()
     if not combined_scores:
         return
 
@@ -548,7 +796,7 @@ def grade_previous_picks(now_kst: datetime.datetime, chat_id: str) -> None:
         )
         graded = raw_gemini_call(sys_inst, prompt)
         if graded and graded.strip() != "NONE" and ("적중⭕" in graded or "낙첨❌" in graded):
-            send_telegram_message(graded, chat_id)
+            send_telegram_message(clean_telegram_text(graded), chat_id, use_html=True)
             item["status"] = "graded"
             changed = True
             time.sleep(5)
@@ -589,13 +837,14 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
                 nba_block += f"\n\n[NBA 팀별 시즌·홈/원정·최근10·득실차 지표]\n{nba_standings}"
             if nba_inj:
                 nba_block += f"\n\n[최신 NBA 부상/결장 뉴스]\n{nba_inj}"
-            nba_res = call_gemini(
-                f"🏀 [{date_str}] 오늘의 NBA 전 경기 심층 분석",
-                "피나클/해외 실시간 배당과 팀별 홈·원정 성적, 최근 10경기 흐름, 득실차, 부상 리포트를 종합해 프로 퀀트 수준으로 디테일하게 분석하고 안정형·고배당 2폴더 조합까지 제시하세요.",
+            title = f"🏀 [{date_str}] 오늘의 NBA 전 경기 분석"
+            nba_res, nba_chart = call_gemini(
+                title,
+                "피나클/해외 실시간 배당과 팀별 홈·원정 성적, 최근 10경기, 득실차, 부상 리포트를 종합해 핵심만 간결하게 분석하고 2폴더 조합 2세트 및 차트 JSON을 작성하세요.",
                 nba_block,
                 detailed_pro=True,
             )
-            send_telegram_message(nba_res, chat_id)
+            deliver_analysis_with_visual(title, nba_res, nba_chart, chat_id)
             record_picks_to_history("NBA", date_str, nba_res)
             time.sleep(12)
 
@@ -612,13 +861,14 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
                 nhl_block += f"\n\n[NHL 팀별 시즌·홈/원정·최근10·득실차 지표]\n{nhl_standings}"
             if nhl_news:
                 nhl_block += f"\n\n[최신 NHL 선발 골리/부상 뉴스]\n{nhl_news}"
-            nhl_res = call_gemini(
-                f"🏒 [{date_str}] 오늘의 NHL 전 경기 심층 분석",
-                "피나클/해외 배당·퍽라인·언오버와 팀별 홈/원정 성적, 최근 10경기, 득실차, 선발 골리·부상 소식을 종합해 프로 수준으로 디테일하게 분석하고 안정형·고배당 2폴더 조합까지 제시하세요.",
+            title = f"🏒 [{date_str}] 오늘의 NHL 전 경기 분석"
+            nhl_res, nhl_chart = call_gemini(
+                title,
+                "피나클/해외 배당·퍽라인·언오버와 팀별 홈/원정 성적, 최근 10경기, 득실차, 선발 골리 소식을 종합해 핵심만 간결하게 분석하고 2폴더 조합 2세트 및 차트 JSON을 작성하세요.",
                 nhl_block,
                 detailed_pro=True,
             )
-            send_telegram_message(nhl_res, chat_id)
+            deliver_analysis_with_visual(title, nhl_res, nhl_chart, chat_id)
             record_picks_to_history("NHL", date_str, nhl_res)
 
 
@@ -655,13 +905,13 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
     if sgo_soccer:
         data_block += f"\n\n[SportsGameOdds 해외/피나클 배당]\n{sgo_soccer}"
 
-    res = call_gemini(
+    res, chart_json = call_gemini(
         title,
-        "피나클/해외 주요 리그 배당·핸디캡·언오버 기준으로 해당 시간대 해외축구 경기들을 분석하세요.",
+        "피나클/해외 주요 리그 배당·핸디캡·언오버 기준으로 해당 시간대 해외축구 경기들을 핵심만 간결하게 분석하고 2폴더 조합 2세트 및 차트 JSON을 작성하세요.",
         data_block,
         detailed_pro=True,
     )
-    send_telegram_message(res, chat_id)
+    deliver_analysis_with_visual(title, res, chart_json, chat_id)
     record_picks_to_history("해외축구", date_str, res)
 
 
@@ -691,13 +941,14 @@ def run_domestic(now_kst: datetime.datetime, date_str: str, chat_id: str) -> Non
         f"[ESPN 아시아축구(K리그/J리그/ACL) 실시간 일정]\n{asia_text}\n\n"
         f"[참고 뉴스]\n{kbl_news}"
     )
-    res = call_gemini(
-        f"🏟️ [{date_str}] 국내 스포츠 및 아시아축구 분석 (프로토 기준)",
-        "위 [프로토 승부식 공식 대상경기 및 배당]과 [ESPN 아시아축구 실시간 일정]에서 오늘(KST) 실제로 열리는 국내 농구(KBL/WKBL), 배구(V리그), 아시아축구만 분석하세요. 오늘 일정에 없는 종목/경기는 절대 지어내지 마세요.",
+    title = f"🏟️ [{date_str}] 국내 스포츠 및 아시아축구 분석 (프로토 기준)"
+    res, chart_json = call_gemini(
+        title,
+        "위 [프로토 승부식 공식 대상경기 및 배당]과 [ESPN 아시아축구 실시간 일정]에서 오늘(KST) 실제로 열리는 국내 농구(KBL/WKBL), 배구(V리그), 아시아축구만 간결하게 분석하고 2폴더 조합 2세트 및 차트 JSON을 작성하세요.",
         data_block,
         detailed_pro=False,
     )
-    send_telegram_message(res, chat_id)
+    deliver_analysis_with_visual(title, res, chart_json, chat_id)
     record_picks_to_history("국내/아시아", date_str, res)
 
 
