@@ -18,10 +18,10 @@ HISTORY_FILE = "picks_history.json"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
 MODELS = [
-    "gemini-3.5-flash-lite",
     "gemini-3.8-flash",
     "gemini-4-hydrogen",
     "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
 ]
 
@@ -158,7 +158,9 @@ def fetch_sportsgameodds(league_ids: str, start_kst: datetime.datetime, end_kst:
                 ("points-home-game-ml-home", "홈승"),
                 ("points-away-game-ml-away", "원정승"),
                 ("points-home-game-sp-home", "홈핸디"),
-                ("points-all-game-ou-over", "기준점오버"),
+                ("points-away-game-sp-away", "원정핸디"),
+                ("points-all-game-ou-over", "오버"),
+                ("points-all-game-ou-under", "언더"),
             ]:
                 o = odds.get(odd_key)
                 if not isinstance(o, dict):
@@ -192,6 +194,37 @@ def fetch_statshawk_ping() -> str:
     except Exception:
         pass
     return ""
+
+
+def fetch_espn_standings(sport: str, league: str) -> str:
+    url = f"https://site.api.espn.com/apis/v2/sports/{sport}/{league}/standings"
+    try:
+        r = requests.get(url, timeout=15)
+        if not r.ok:
+            return ""
+        data = r.json()
+        rows = []
+        for conf in data.get("children", []):
+            entries = (conf.get("standings") or {}).get("entries", [])
+            for entry in entries:
+                team = (entry.get("team") or {}).get("displayName", "")
+                stats_map = {s.get("name"): s.get("displayValue", "") for s in entry.get("stats", [])}
+                rec = stats_map.get("overall", "")
+                home_rec = stats_map.get("Home", "")
+                road_rec = stats_map.get("Road", "")
+                streak = stats_map.get("streak", "")
+                l10 = stats_map.get("Last Ten Games", "")
+                ppg = stats_map.get("avgPointsFor", "") or stats_map.get("pointsFor", "")
+                oppg = stats_map.get("avgPointsAgainst", "") or stats_map.get("pointsAgainst", "")
+                diff = stats_map.get("differential", "") or stats_map.get("pointDifferential", "")
+                if team:
+                    rows.append(
+                        f"- {team}: 시즌 {rec} | 홈 {home_rec} / 원정 {road_rec} | 최근10 {l10} | 연속 {streak} | 득점 {ppg} / 실점 {oppg} (득실차 {diff})"
+                    )
+        return "\n".join(rows)
+    except Exception as e:
+        print(f"ESPN standings error ({league}): {e}", flush=True)
+        return ""
 
 
 def fetch_espn_window(sport: str, league: str, start_kst: datetime.datetime, end_kst: datetime.datetime) -> str:
@@ -228,8 +261,14 @@ def fetch_espn_window(sport: str, league: str, start_kst: datetime.datetime, end
                 away = next((c for c in competitors if c.get("homeAway") == "away"), {})
                 h_name = home.get("team", {}).get("displayName", "Home")
                 a_name = away.get("team", {}).get("displayName", "Away")
-                h_rec = (home.get("records") or [{}])[0].get("summary", "")
-                a_rec = (away.get("records") or [{}])[0].get("summary", "")
+                h_rec = ", ".join(
+                    f"{rec.get('name', '')}:{rec.get('summary', '')}"
+                    for rec in (home.get("records") or [])[:3]
+                )
+                a_rec = ", ".join(
+                    f"{rec.get('name', '')}:{rec.get('summary', '')}"
+                    for rec in (away.get("records") or [])[:3]
+                )
 
                 odds_info = ""
                 odds_list = comp.get("odds") or []
@@ -237,7 +276,7 @@ def fetch_espn_window(sport: str, league: str, start_kst: datetime.datetime, end
                     o = odds_list[0]
                     details = o.get("details", "")
                     ou = o.get("overUnder", "")
-                    odds_info = f" | 배당라인: {details}, 기준점(O/U): {ou}"
+                    odds_info = f" | ESPN라인: {details}, O/U: {ou}"
 
                 events_out.append(
                     f"- [{dt_kst.strftime('%m/%d %H:%M')} KST] {h_name}(홈, {h_rec}) vs {a_name}(원정, {a_rec}){odds_info}"
@@ -246,6 +285,25 @@ def fetch_espn_window(sport: str, league: str, start_kst: datetime.datetime, end
             print(f"ESPN fetch error ({league} {d}): {e}", flush=True)
 
     return "\n".join(events_out)
+
+
+def fetch_en_news_rss(query: str, max_items: int = 8) -> str:
+    q = urllib.parse.quote(query)
+    url = f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+    try:
+        r = requests.get(url, timeout=15)
+        if not r.ok:
+            return ""
+        root = ET.fromstring(r.text)
+        items = []
+        for item in root.findall(".//item")[:max_items]:
+            title = item.findtext("title", "").strip()
+            pub = item.findtext("pubDate", "").strip()
+            if title:
+                items.append(f"- {title} ({pub})")
+        return "\n".join(items)
+    except Exception:
+        return ""
 
 
 def fetch_finished_scores(now_kst: datetime.datetime) -> str:
@@ -378,27 +436,53 @@ def raw_gemini_call(sys_inst: str, prompt: str) -> str:
     return ""
 
 
-def call_gemini(title: str, guide: str, data_block: str) -> str:
+def call_gemini(title: str, guide: str, data_block: str, detailed_pro: bool = False) -> str:
     sys_inst = (
-        "당신은 한국인 스포츠 베팅 전문 애널리스트입니다. "
+        "당신은 최상위 1% 프로 스포츠 베팅 퀀트·애널리스트입니다. "
         "반드시 100% 한국어로만 작성하고 영어 문장이나 영어 약어 팀명(HOU, MIA 등)을 절대 쓰지 마세요. "
         "마크다운 기호(*, **, #)와 빨간색 이모지(🔴, 🟥)를 절대 사용하지 마세요. "
         "절대로 [경기 데이터]에 없는 가상의 경기나 다른 날짜의 경기를 지어내지 마세요. 오직 오늘 실제로 열리는 것이 확인된 경기만 분석하세요."
     )
-    rules = """
-1) [경기 데이터]에서 오늘 날짜(KST)로 실제 열리는 것이 확인된 경기만 단 한 경기도 빠뜨리지 말고 순서대로 분석해 줘. (데이터에 없는 종목이나 없는 경기는 절대 지어내지 마!)
+    if detailed_pro:
+        rules = """
+1) [경기 데이터]에서 오늘 날짜(KST)로 실제 열리는 것이 확인된 모든 경기를 단 한 경기도 빠뜨리지 말고 순서대로 심층 분석해 줘.
 2) 텔레그램 메시지용이므로 *, **, #, --- 같은 마크다운 기호와 빨간색 이모지(🔴, 🟥)는 절대 쓰지 마.
 3) 모든 팀명은 반드시 한국어 풀네임으로 적고 (홈) / (원정)과 한국시간(KST)을 꼭 표시해 줘.
 4) [핵심 베팅 전략 - 정배 편중 절대 금지 & 역배·플핸 적극 활용]
 - 모든 경기를 정배(정배 일반승·정배 마핸) 쪽으로만 고르는 것을 엄격히 금지합니다.
 - 5경기 이상이면 최소 2경기 이상, 3~4경기면 최소 1경기 이상은 반드시 [역배 일반승] 또는 [플핸(+핸디승)]을 추천픽으로 선정하세요.
-- 배당이 과도하게 쏠린 경기(예: -9.5 이상 큰 마핸)나 원정 강팀이 피로/백투백에 걸린 경기는 무리한 정배 마핸 대신 언더독 플핸(+핸디)이나 역배 승, 혹은 언오버로 돌리세요.
+- 배당이 과도하게 쏠린 경기(예: NBA -9.5 이상 마핸, NHL -1.5 무리한 퍽라인)나 강팀의 원정 피로·백투백·부상 변수가 보이면 언더독 플핸(+핸디), 역배 승, 또는 언오버로 밸류를 잡으세요.
 - 전체 추천픽에 [일반승(정배/역배)], [핸디캡(마핸/플핸)], [언오버(오버/언더)] 3가지 유형이 고르게 섞여야 합니다.
-5) 각 경기마다 아래 양식대로 2~3문장의 핵심 분석 근거와 최종 추천픽 딱 1개만 작성해 줘.
+5) 각 경기마다 아래 [고퀄리티 심층 양식]으로 정확하게 작성해 줘 (수치·홈/원정 성적·득실차·배당 흐름을 구체적으로 인용):
+[종목 | 한국시간] 홈팀(홈) vs 원정팀(원정)
+• 라인/배당: 피나클/해외 기준 핸디캡 및 언오버 기준점 (국내 프로토 환산 관점 포함)
+• 핵심 지표: 양 팀 시즌·홈/원정 성적, 최근 10경기 흐름, 평균 득실점·득실차 비교
+• 매치업 & 변수: 공수 페이스(템포), 백투백·원정 피로도, 부상/결장 뉴스 및 선발 골리(NHL) 등 승부처 분석
+• 밸류 근거: 왜 일반승 대신 이 라인(마핸/플핸/언오버/역배)이 가장 기대값이 높은지 핵심 정리
+🌿 최종 추천픽: (예: '유타 재즈 +11.5 핸디승 (플핸)' 또는 '보스턴 셀틱스 승 (역배 일반승)' 등 딱 1개만)
+6) 맨 마지막에 [디테일 추천 조합 (2개 세트)]을 반드시 아래처럼 구분해서 작성해 줘 (2경기 이상일 때):
+🎯 [조합 1 · 안정형 주력 2폴더]
+- 1폴더: 경기명 + 추천픽 (선정 이유 1줄)
+- 2폴더: 경기명 + 추천픽 (선정 이유 1줄)
+- 조합 시너지 & 리스크 관리: 두 경기를 묶었을 때의 강점과 주의 변수 1~2줄
+
+💎 [조합 2 · 고배당 밸류 2폴더 (역배/플핸 포함)]
+- 1폴더: 경기명 + 추천픽 (역배 또는 플핸 포함, 선정 이유 1줄)
+- 2폴더: 경기명 + 추천픽 (핸디캡 또는 언오버, 선정 이유 1줄)
+- 조합 시너지 & 기대값 포인트: 정배 편중을 피한 고배당 공략 포인트 1~2줄
+"""
+    else:
+        rules = """
+1) [경기 데이터]에서 오늘 날짜(KST)로 실제 열리는 것이 확인된 경기만 단 한 경기도 빠뜨리지 말고 순서대로 분석해 줘. (데이터에 없는 종목이나 없는 경기는 절대 지어내지 마!)
+2) 텔레그램 메시지용이므로 *, **, #, --- 같은 마크다운 기호와 빨간색 이모지(🔴, 🟥)는 절대 쓰지 마.
+3) 모든 팀명은 반드시 한국어 풀네임으로 적고 (홈) / (원정)과 한국시간(KST)을 꼭 표시해 줘.
+4) [핵심 베팅 전략 - 정배 편중 절대 금지 & 역배·플핸 적극 활용]
+- 모든 경기를 정배 쪽으로만 고르지 말고, 3경기 이상이면 최소 1경기 이상은 반드시 [역배 일반승] 또는 [플핸(+핸디승)]을 포함하며 [일반승/핸디캡/언오버]를 고르게 섞으세요.
+5) 각 경기마다 아래 양식대로 핵심 분석 근거와 최종 추천픽 딱 1개만 작성해 줘.
 [종목 | 한국시간] 홈팀(홈) vs 원정팀(원정) | 배당/기준점 정보
-• 분석 근거: 양 팀 시즌 성적, 홈/원정 강약점, 백투백·부상 변수, 그리고 왜 이 픽(일반승/마핸/플핸/언오버/역배)이 가장 밸류가 높은지 2~3문장으로 명확하게 설명
-🌿 최종 추천픽: (예: '수원 케이티 -3.5 핸디승 (마핸)', '유타 재즈 +11.5 핸디승 (플핸)', '인디애나 페이서스 승 (역배 일반승)', '기준점 224.5 언더' 중 딱 1개만)
-6) 2경기 이상일 때만 맨 마지막에 가장 확실한 2폴더 추천 조합 1개를 덧붙여 줘 (정배+정배 조합 대신 플핸/마핸 + 언오버처럼 유형과 리스크를 분산해서 구성).
+• 분석 근거: 양 팀 시즌 성적, 홈/원정 강약점, 부상·일정 변수, 그리고 왜 이 픽(일반승/마핸/플핸/언오버/역배)이 가장 밸류가 높은지 2~3문장으로 명확하게 설명
+🌿 최종 추천픽: (예: '수원 케이티 -3.5 핸디승 (마핸)', '삼성생명 +5.5 핸디승 (플핸)', '흥국생명 승 (역배 일반승)', '기준점 160.5 오버' 중 딱 1개만)
+6) 2경기 이상일 때만 맨 마지막에 [안정형 주력 2폴더]와 [고배당 밸류 2폴더]를 선정 이유와 함께 작성해 줘.
 """
     prompt = f"{title}\n{guide}\n\n{rules}\n\n[경기 데이터]\n{data_block}"
     res = raw_gemini_call(sys_inst, prompt)
@@ -494,15 +578,22 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
 
     if not already_sent(date_str, "NBA"):
         nba_espn = fetch_espn_window("basketball", "nba", start_kst, end_kst)
-        nba_sgo = fetch_sportsgameodds("NBA", start_kst, end_kst)
         if nba_espn:
-            nba_block = f"[ESPN 일정 및 전적]\n{nba_espn}"
+            nba_sgo = fetch_sportsgameodds("NBA", start_kst, end_kst)
+            nba_standings = fetch_espn_standings("basketball", "nba")
+            nba_inj = fetch_en_news_rss("NBA injury report lineup today", max_items=8)
+            nba_block = f"[오늘의 NBA 경기 일정 및 기본 라인]\n{nba_espn}"
             if nba_sgo:
-                nba_block += f"\n\n[SportsGameOdds 해외/피나클 배당]\n{nba_sgo}"
+                nba_block += f"\n\n[SportsGameOdds 피나클/해외 실시간 배당]\n{nba_sgo}"
+            if nba_standings:
+                nba_block += f"\n\n[NBA 팀별 시즌·홈/원정·최근10·득실차 지표]\n{nba_standings}"
+            if nba_inj:
+                nba_block += f"\n\n[최신 NBA 부상/결장 뉴스]\n{nba_inj}"
             nba_res = call_gemini(
-                f"🏀 [{date_str}] 오늘의 NBA 전 경기 분석",
-                "피나클/해외 정배·핸디캡·언오버 기준점 및 국내 프로토 환산 관점으로 오늘(한국시간 07:00~16:00) 열리는 NBA 경기만 분석하세요.",
+                f"🏀 [{date_str}] 오늘의 NBA 전 경기 심층 분석",
+                "피나클/해외 실시간 배당과 팀별 홈·원정 성적, 최근 10경기 흐름, 득실차, 부상 리포트를 종합해 프로 퀀트 수준으로 디테일하게 분석하고 안정형·고배당 2폴더 조합까지 제시하세요.",
                 nba_block,
+                detailed_pro=True,
             )
             send_telegram_message(nba_res, chat_id)
             record_picks_to_history("NBA", date_str, nba_res)
@@ -510,15 +601,22 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
 
     if not already_sent(date_str, "NHL"):
         nhl_espn = fetch_espn_window("hockey", "nhl", start_kst, end_kst)
-        nhl_sgo = fetch_sportsgameodds("NHL", start_kst, end_kst)
         if nhl_espn:
-            nhl_block = f"[ESPN 일정 및 전적]\n{nhl_espn}"
+            nhl_sgo = fetch_sportsgameodds("NHL", start_kst, end_kst)
+            nhl_standings = fetch_espn_standings("hockey", "nhl")
+            nhl_news = fetch_en_news_rss("NHL starting goalies injury report today", max_items=8)
+            nhl_block = f"[오늘의 NHL 경기 일정 및 기본 라인]\n{nhl_espn}"
             if nhl_sgo:
-                nhl_block += f"\n\n[SportsGameOdds 해외/피나클 배당]\n{nhl_sgo}"
+                nhl_block += f"\n\n[SportsGameOdds 피나클/해외 실시간 배당]\n{nhl_sgo}"
+            if nhl_standings:
+                nhl_block += f"\n\n[NHL 팀별 시즌·홈/원정·최근10·득실차 지표]\n{nhl_standings}"
+            if nhl_news:
+                nhl_block += f"\n\n[최신 NHL 선발 골리/부상 뉴스]\n{nhl_news}"
             nhl_res = call_gemini(
-                f"🏒 [{date_str}] 오늘의 NHL 전 경기 분석",
-                "피나클/해외 배당·핸디캡(퍽라인)·언오버 기준으로 오늘(한국시간 07:00~16:00) 열리는 NHL 경기만 분석하세요.",
+                f"🏒 [{date_str}] 오늘의 NHL 전 경기 심층 분석",
+                "피나클/해외 배당·퍽라인·언오버와 팀별 홈/원정 성적, 최근 10경기, 득실차, 선발 골리·부상 소식을 종합해 프로 수준으로 디테일하게 분석하고 안정형·고배당 2폴더 조합까지 제시하세요.",
                 nhl_block,
+                detailed_pro=True,
             )
             send_telegram_message(nhl_res, chat_id)
             record_picks_to_history("NHL", date_str, nhl_res)
@@ -561,6 +659,7 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
         title,
         "피나클/해외 주요 리그 배당·핸디캡·언오버 기준으로 해당 시간대 해외축구 경기들을 분석하세요.",
         data_block,
+        detailed_pro=True,
     )
     send_telegram_message(res, chat_id)
     record_picks_to_history("해외축구", date_str, res)
@@ -596,6 +695,7 @@ def run_domestic(now_kst: datetime.datetime, date_str: str, chat_id: str) -> Non
         f"🏟️ [{date_str}] 국내 스포츠 및 아시아축구 분석 (프로토 기준)",
         "위 [프로토 승부식 공식 대상경기 및 배당]과 [ESPN 아시아축구 실시간 일정]에서 오늘(KST) 실제로 열리는 국내 농구(KBL/WKBL), 배구(V리그), 아시아축구만 분석하세요. 오늘 일정에 없는 종목/경기는 절대 지어내지 마세요.",
         data_block,
+        detailed_pro=False,
     )
     send_telegram_message(res, chat_id)
     record_picks_to_history("국내/아시아", date_str, res)
