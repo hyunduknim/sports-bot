@@ -738,11 +738,11 @@ def is_slot_ready_to_grade(item: dict, now_kst: datetime.datetime) -> bool:
     if item_date < today_str:
         return True
     if slot in ("NBA", "NHL"):
-        return now_kst.hour >= 16
+        return now_kst.hour >= 15
     if slot == "국내/아시아":
-        return now_kst.hour >= 22
+        return now_kst.hour >= 21
     if slot == "해외축구":
-        return now_kst.hour >= 9
+        return now_kst.hour >= 8
     return True
 
 
