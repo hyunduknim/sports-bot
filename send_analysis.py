@@ -741,7 +741,7 @@ def is_slot_ready_to_grade(item: dict, now_kst: datetime.datetime) -> bool:
         return now_kst.hour >= 15
     if slot == "국내/아시아":
         return now_kst.hour >= 21
-    if slot == "해외축구":
+    if "해외축구" in slot:
         return now_kst.hour >= 8
     return True
 
@@ -875,16 +875,17 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
 
 
 def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str, is_weekend: bool) -> None:
-    if already_sent(date_str, "해외축구"):
+    slot_name = "주말 밤 해외축구" if is_weekend else "새벽 해외축구"
+    if already_sent(date_str, slot_name):
         return
     if is_weekend:
         start_kst = now_kst.replace(hour=20, minute=0, second=0, microsecond=0)
-        end_kst = (now_kst + datetime.timedelta(days=1)).replace(hour=6, minute=0, second=0, microsecond=0)
+        end_kst = (now_kst + datetime.timedelta(days=1)).replace(hour=6, minute=30, second=0, microsecond=0)
         title = f"⚽ [{date_str}] 주말 밤 해외축구 주요 경기 분석"
     else:
         start_kst = now_kst.replace(hour=1, minute=0, second=0, microsecond=0)
         end_kst = now_kst.replace(hour=6, minute=30, second=0, microsecond=0)
-        title = f"⚽ [{date_str}] 평일 새벽 해외축구 주요 경기 분석"
+        title = f"⚽ [{date_str}] 새벽 해외축구 주요 경기 분석"
 
     leagues = [
         ("soccer", "eng.1", "EPL"),
@@ -893,6 +894,9 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
         ("soccer", "ger.1", "분데스리가"),
         ("soccer", "fra.1", "리그1"),
         ("soccer", "uefa.champions", "챔피언스리그"),
+        ("soccer", "uefa.europa", "유로파리그"),
+        ("soccer", "uefa.europa.conf", "컨퍼런스리그"),
+        ("soccer", "uefa.nations", "네이션스리그"),
     ]
     blocks = []
     for sp, lg, label in leagues:
@@ -902,19 +906,19 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
     if not blocks:
         return
 
-    sgo_soccer = fetch_sportsgameodds("EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,UEFA_CHAMPIONS_LEAGUE", start_kst, end_kst)
+    sgo_soccer = fetch_sportsgameodds("EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,UEFA_CHAMPIONS_LEAGUE,UEFA_EUROPA_LEAGUE", start_kst, end_kst)
     data_block = "\n\n".join(blocks)
     if sgo_soccer:
         data_block += f"\n\n[SportsGameOdds 해외/피나클 배당]\n{sgo_soccer}"
 
     res, chart_json = call_gemini(
         title,
-        "피나클/해외 주요 리그 배당·핸디캡·언오버 기준으로 해당 시간대 해외축구 경기들을 핵심만 간결하게 분석하고 2폴더 조합 2세트 및 차트 JSON을 작성하세요.",
+        "피나클/해외 주요 리그 배당·핸디캡·언오버 기준으로 해당 시간대 해외축구 경기들을 4항목 심층 분석하고 2폴더 조합 2세트 및 차트 JSON을 작성하세요.",
         data_block,
         detailed_pro=True,
     )
     deliver_analysis_with_visual(title, res, chart_json, chat_id)
-    record_picks_to_history("해외축구", date_str, res)
+    record_picks_to_history(slot_name, date_str, res)
 
 
 def run_domestic(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None:
@@ -968,8 +972,7 @@ def main() -> None:
     is_weekend = weekday >= 5
 
     if 0 <= hour < 5:
-        if not is_weekend:
-            run_overseas_soccer(now_kst, date_str, chat_id, is_weekend=False)
+        run_overseas_soccer(now_kst, date_str, chat_id, is_weekend=False)
     elif 6 <= hour < 11:
         run_nba_nhl(now_kst, date_str, chat_id)
     elif 12 <= hour < 15:
