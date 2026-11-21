@@ -546,6 +546,7 @@ def fetch_finished_scores(now_kst: datetime.datetime) -> str:
         ("soccer", "fra.1", "리그1"),
         ("soccer", "uefa.champions", "챔피언스리그"),
         ("soccer", "kor.1", "K리그1"),
+        ("soccer", "kor.2", "K리그2"),
         ("soccer", "jpn.1", "J리그"),
         ("soccer", "afc.champions", "아챔"),
     ]
@@ -585,12 +586,12 @@ def fetch_finished_scores(now_kst: datetime.datetime) -> str:
     return "\n".join(out)
 
 
-def fetch_via_jina(target_url: str, max_chars: int = 40000) -> str:
+def fetch_via_jina(target_url: str, max_chars: int = 350000) -> str:
     try:
         r = requests.get(
             f"https://r.jina.ai/{target_url}",
             headers={"User-Agent": "Mozilla/5.0"},
-            timeout=25,
+            timeout=30,
         )
         if r.ok and r.text:
             return r.text[:max_chars]
@@ -599,23 +600,40 @@ def fetch_via_jina(target_url: str, max_chars: int = 40000) -> str:
     return ""
 
 
+def _extract_mmdd_lines(raw: str, target_mmdd: str) -> str:
+    if not raw or target_mmdd not in raw:
+        return ""
+    lines = raw.splitlines()
+    matched = []
+    i = 0
+    while i < len(lines):
+        if target_mmdd in lines[i]:
+            block = " | ".join(ln.strip() for ln in lines[i : i + 7] if ln.strip())
+            matched.append(block)
+            i += 4
+        else:
+            i += 1
+    return "\n".join(matched[:140]) if matched else ""
+
+
 def fetch_wisetoto_by_mmdd(target_mmdd: str) -> str:
+    year = datetime.datetime.now(KST).year
     for target in ["https://mw.wisetoto.com/", "https://www.wisetoto.com/"]:
-        raw = fetch_via_jina(target, max_chars=45000)
-        if not raw or target_mmdd not in raw:
-            continue
-        lines = raw.splitlines()
-        matched = []
-        i = 0
-        while i < len(lines):
-            if target_mmdd in lines[i]:
-                block = " | ".join(ln.strip() for ln in lines[i : i + 6] if ln.strip())
-                matched.append(block)
-                i += 4
-            else:
-                i += 1
-        if matched:
-            return "\n".join(matched[:100])
+        raw = fetch_via_jina(target, max_chars=350000)
+        found = _extract_mmdd_lines(raw, target_mmdd)
+        if found:
+            return found
+        # If current default round does not have target date, try newest round number on page
+        if raw:
+            m = re.search(r"프로토\s*승부식\s*\d{4}년도\s*(\d+)회차", raw)
+            if m:
+                cur_round = int(m.group(1))
+                for r_num in (cur_round + 1, cur_round - 1):
+                    alt_url = f"https://mw.wisetoto.com/?tab_type=proto&game_type=pt&game_category=pt1&game_year={year}&game_round={r_num}"
+                    alt_raw = fetch_via_jina(alt_url, max_chars=350000)
+                    alt_found = _extract_mmdd_lines(alt_raw, target_mmdd)
+                    if alt_found:
+                        return alt_found
     return ""
 
 
@@ -663,7 +681,7 @@ def raw_gemini_call(sys_inst: str, prompt: str) -> str:
             except Exception as e:
                 last_err = e
                 print(f"Round {round_idx} | Model {model_name} failed: {e}", flush=True)
-                time.sleep(8 * round_idx)
+                time.sleep(3 * round_idx)
     print(f"All models failed. Last error: {last_err}", flush=True)
     return ""
 
@@ -906,7 +924,7 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
     if not blocks:
         return
 
-    sgo_soccer = fetch_sportsgameodds("EPL,LA_LIGA,SERIE_A,BUNDESLIGA,LIGUE_1,UEFA_CHAMPIONS_LEAGUE,UEFA_EUROPA_LEAGUE", start_kst, end_kst)
+    sgo_soccer = fetch_sportsgameodds("EPL,LA_LIGA,IT_SERIE_A,BUNDESLIGA,LIGUE_1,UEFA_CHAMPIONS_LEAGUE,UEFA_EUROPA_LEAGUE", start_kst, end_kst)
     data_block = "\n\n".join(blocks)
     if sgo_soccer:
         data_block += f"\n\n[SportsGameOdds 해외/피나클 배당]\n{sgo_soccer}"
@@ -930,6 +948,7 @@ def run_domestic(now_kst: datetime.datetime, date_str: str, chat_id: str) -> Non
     asia_blocks = []
     for sp, lg, label in [
         ("soccer", "kor.1", "K리그1"),
+        ("soccer", "kor.2", "K리그2"),
         ("soccer", "jpn.1", "J리그"),
         ("soccer", "afc.champions", "AFC 챔피언스리그"),
     ]:
