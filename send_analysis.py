@@ -1,4 +1,7 @@
 import os
+import math
+import csv
+import io
 import html
 import json
 import re
@@ -161,6 +164,227 @@ def send_telegram_message(text: str, chat_id: str, use_html: bool = True) -> Non
             print(f"Telegram send exception: {e}", flush=True)
 
 
+def fetch_espn_nba_injuries(playing_teams: set) -> str:
+    url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
+    try:
+        r = requests.get(url, timeout=15)
+        if not r.ok:
+            return ""
+        out = []
+        for team_block in r.json().get("injuries", []):
+            t_name = team_block.get("displayName", "")
+            if playing_teams and not any(
+                pt.lower() in t_name.lower() or t_name.lower() in pt.lower()
+                for pt in playing_teams
+            ):
+                continue
+            players = []
+            for inj in team_block.get("injuries", []):
+                status = inj.get("status", "")
+                if status not in ("Out", "Doubtful", "Questionable", "Day-To-Day"):
+                    continue
+                ath = inj.get("athlete") or {}
+                p_name = ath.get("displayName", "")
+                pos = (ath.get("position") or {}).get("abbreviation", "")
+                comment = (inj.get("shortComment") or "")[:60]
+                if p_name:
+                    players.append(f"{p_name}({pos}, {status})")
+            if players:
+                out.append(f"- {t_name}: " + ", ".join(players[:6]))
+        return "\n".join(out)
+    except Exception as e:
+        print(f"ESPN NBA injuries error: {e}", flush=True)
+        return ""
+
+
+def fetch_fatigue_b2b(sport: str, league: str, now_kst: datetime.datetime, playing_teams: set) -> str:
+    if not playing_teams:
+        return ""
+    played_days = {t: [] for t in playing_teams}
+    for days_ago in (1, 2, 3):
+        d_str = (now_kst - datetime.timedelta(days=days_ago)).strftime("%Y%m%d")
+        url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard?dates={d_str}"
+        try:
+            r = requests.get(url, timeout=12)
+            if not r.ok:
+                continue
+            for ev in r.json().get("events", []):
+                dt_str = ev.get("date", "")
+                if not dt_str:
+                    continue
+                dt_kst = datetime.datetime.fromisoformat(dt_str.replace("Z", "+00:00")).astimezone(KST)
+                diff_days = (now_kst.date() - dt_kst.date()).days
+                if diff_days <= 0 or diff_days > 3:
+                    continue
+                comp = (ev.get("competitions") or [{}])[0]
+                for c in comp.get("competitors", []):
+                    t_name = (c.get("team") or {}).get("displayName", "")
+                    if t_name in played_days and diff_days not in played_days[t_name]:
+                        played_days[t_name].append(diff_days)
+        except Exception:
+            continue
+
+    lines = []
+    for t in sorted(playing_teams):
+        days = sorted(played_days.get(t, []))
+        flags = []
+        if 1 in days:
+            flags.append("백투백(B2B·피로 주의)")
+        if len(days) >= 3:
+            flags.append("최근 4일 3경기(강행군)")
+        if not days:
+            flags.append("3일 이상 충분한 휴식")
+        elif 1 not in days:
+            flags.append(f"휴식 {days[0]-1}일")
+        lines.append(f"- {t}: " + ", ".join(flags))
+    return "\n".join(lines)
+
+
+def fetch_nhl_official_advanced(playing_teams: set) -> str:
+    out = []
+    try:
+        r = requests.get("https://api-web.nhle.com/v1/standings/now", timeout=15)
+        if r.ok:
+            for st in r.json().get("standings", []):
+                t_name = (st.get("teamName") or {}).get("default", "")
+                if playing_teams and not any(
+                    pt.lower() in t_name.lower() or t_name.lower() in pt.lower()
+                    for pt in playing_teams
+                ):
+                    continue
+                gp = st.get("gamesPlayed", 1) or 1
+                gf_pg = round((st.get("goalFor", 0) or 0) / gp, 2)
+                ga_pg = round((st.get("goalAgainst", 0) or 0) / gp, 2)
+                hw, hl, ho = st.get("homeWins", 0), st.get("homeLosses", 0), st.get("homeOtLosses", 0)
+                rw, rl, ro = st.get("roadWins", 0), st.get("roadLosses", 0), st.get("roadOtLosses", 0)
+                l10w, l10l, l10o = st.get("l10Wins", 0), st.get("l10Losses", 0), st.get("l10OtLosses", 0)
+                stk = f"{st.get('streakCode', '')}{st.get('streakCount', '')}"
+                out.append(
+                    f"- {t_name}: 홈({hw}-{hl}-{ho}) 원정({rw}-{rl}-{ro}) | 최근10({l10w}-{l10l}-{l10o}) 연속:{stk} | 평균득점 {gf_pg} / 평균실점 {ga_pg}"
+                )
+    except Exception as e:
+        print(f"NHL official standings error: {e}", flush=True)
+
+    try:
+        r2 = requests.get(
+            "https://api.nhle.com/stats/rest/en/team/summary?sort=points&limit=40",
+            timeout=15,
+        )
+        if r2.ok:
+            pp_lines = []
+            for row in r2.json().get("data", []):
+                t_name = row.get("teamFullName", "")
+                if playing_teams and not any(
+                    pt.lower() in t_name.lower() or t_name.lower() in pt.lower()
+                    for pt in playing_teams
+                ):
+                    continue
+                pp = round((row.get("powerPlayPct") or 0) * 100, 1)
+                pk = round((row.get("penaltyKillPct") or 0) * 100, 1)
+                sf = round(row.get("shotsForPerGame") or 0, 1)
+                sa = round(row.get("shotsAgainstPerGame") or 0, 1)
+                pp_lines.append(f"- {t_name}: PP {pp}% / PK {pk}% | 슈팅 {sf} / 피슈팅 {sa}")
+            if pp_lines:
+                out.append("\n[NHL 특수팀(파워플레이/페널티킬) 및 슈팅 지표]")
+                out.extend(pp_lines)
+    except Exception as e:
+        print(f"NHL special teams error: {e}", flush=True)
+
+    return "\n".join(out)
+
+
+def _dixon_coles_probs(elo_home: float, elo_away: float, home_adv: float = 65.0) -> dict:
+    diff = (elo_home + home_adv) - elo_away
+    exp_h = 1.0 / (1.0 + 10.0 ** (-diff / 400.0))
+    lam_h = max(0.45, min(3.2, 1.35 * (0.55 + 0.9 * exp_h)))
+    lam_a = max(0.35, min(2.9, 1.35 * (1.45 - 0.9 * exp_h)))
+    rho = -0.10
+
+    def pois(k: int, lam: float) -> float:
+        return (lam ** k) * math.exp(-lam) / math.factorial(k)
+
+    def tau(x: int, y: int) -> float:
+        if x == 0 and y == 0:
+            return max(0.01, 1.0 - lam_h * lam_a * rho)
+        if x == 0 and y == 1:
+            return max(0.01, 1.0 + lam_h * rho)
+        if x == 1 and y == 0:
+            return max(0.01, 1.0 + lam_a * rho)
+        if x == 1 and y == 1:
+            return max(0.01, 1.0 - rho)
+        return 1.0
+
+    p_home = p_draw = p_away = p_over25 = 0.0
+    total = 0.0
+    for hg in range(7):
+        for ag in range(7):
+            prob = pois(hg, lam_h) * pois(ag, lam_a) * tau(hg, ag)
+            total += prob
+            if hg > ag:
+                p_home += prob
+            elif hg == ag:
+                p_draw += prob
+            else:
+                p_away += prob
+            if hg + ag >= 3:
+                p_over25 += prob
+    if total > 0:
+        p_home, p_draw, p_away, p_over25 = (
+            p_home / total * 100,
+            p_draw / total * 100,
+            p_away / total * 100,
+            p_over25 / total * 100,
+        )
+    return {
+        "home": round(p_home, 1),
+        "draw": round(p_draw, 1),
+        "away": round(p_away, 1),
+        "over25": round(p_over25, 1),
+        "lam_h": round(lam_h, 2),
+        "lam_a": round(lam_a, 2),
+    }
+
+
+def fetch_clubelo_and_dixon_coles(now_kst: datetime.datetime, matchups: list) -> str:
+    if not matchups:
+        return ""
+    d_str = now_kst.strftime("%Y-%m-%d")
+    try:
+        r = requests.get(f"http://api.clubelo.com/{d_str}", timeout=15)
+        if not r.ok or "Club,Country" not in r.text:
+            return ""
+        elo_rows = []
+        for row in csv.DictReader(io.StringIO(r.text)):
+            club = (row.get("Club") or "").strip()
+            elo = (row.get("Elo") or "").strip()
+            if club and elo:
+                elo_rows.append((club, float(elo)))
+
+        def find_elo(name: str):
+            nl = name.lower()
+            for club, val in elo_rows:
+                cl = club.lower()
+                if len(cl) >= 4 and (cl in nl or nl in cl):
+                    return club, val
+            return None, None
+
+        out = []
+        for h_name, a_name in matchups:
+            hc, he = find_elo(h_name)
+            ac, ae = find_elo(a_name)
+            if he and ae:
+                dc = _dixon_coles_probs(he, ae)
+                out.append(
+                    f"- {h_name}(Elo {he:.0f}) vs {a_name}(Elo {ae:.0f}) | "
+                    f"Dixon-Coles 확률: 홈승 {dc['home']}% / 무 {dc['draw']}% / 원정승 {dc['away']}% | "
+                    f"기대득점 {dc['lam_h']}:{dc['lam_a']} (오버2.5 {dc['over25']}%)"
+                )
+        return "\n".join(out)
+    except Exception as e:
+        print(f"ClubElo/Dixon-Coles error: {e}", flush=True)
+        return ""
+
+
 def fetch_sportsgameodds(league_ids: str, start_kst: datetime.datetime, end_kst: datetime.datetime) -> str:
     if not SPORTSGAMEODDS_KEY:
         return ""
@@ -259,7 +483,7 @@ def fetch_espn_standings(sport: str, league: str) -> str:
         return ""
 
 
-def fetch_espn_window(sport: str, league: str, start_kst: datetime.datetime, end_kst: datetime.datetime) -> str:
+def fetch_espn_window(sport: str, league: str, start_kst: datetime.datetime, end_kst: datetime.datetime) -> tuple[str, set]:
     dates = set()
     cur = start_kst - datetime.timedelta(days=1)
     while cur.date() <= (end_kst + datetime.timedelta(days=1)).date():
@@ -267,6 +491,7 @@ def fetch_espn_window(sport: str, league: str, start_kst: datetime.datetime, end
         cur += datetime.timedelta(days=1)
 
     events_out = []
+    playing_teams = set()
     seen_ids = set()
     for d in sorted(dates):
         url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard?dates={d}"
@@ -293,6 +518,8 @@ def fetch_espn_window(sport: str, league: str, start_kst: datetime.datetime, end
                 away = next((c for c in competitors if c.get("homeAway") == "away"), {})
                 h_name = home.get("team", {}).get("displayName", "Home")
                 a_name = away.get("team", {}).get("displayName", "Away")
+                playing_teams.add(h_name)
+                playing_teams.add(a_name)
                 h_rec = ", ".join(
                     f"{rec.get('name', '')}:{rec.get('summary', '')}"
                     for rec in (home.get("records") or [])[:3]
@@ -316,7 +543,7 @@ def fetch_espn_window(sport: str, league: str, start_kst: datetime.datetime, end
         except Exception as e:
             print(f"ESPN fetch error ({league} {d}): {e}", flush=True)
 
-    return "\n".join(events_out)
+    return "\n".join(events_out), playing_teams
 
 
 def fetch_en_news_rss(query: str, max_items: int = 8) -> str:
@@ -500,16 +727,17 @@ def call_gemini_matches(title: str, guide: str, data_block: str) -> str:
 1) [경기 데이터]에서 오늘 날짜(KST)로 실제 열리는 것이 확인된 모든 경기를 빠짐없이 심층 분석하되, 항목별로 줄바꿈을 깔끔하게 정리하세요.
 2) 텔레그램 메시지용이므로 *, **, #, --- 같은 마크다운 기호와 빨간색 이모지(🔴, 🟥)는 절대 쓰지 마세요.
 3) 모든 팀명은 100% 한국어 풀네임으로 적고 (홈) / (원정)과 한국시간(KST)을 표시하세요.
-4) [핵심 베팅 전략 - 정배/일반승 편중 절대 금지 & 핸디캡·언오버·역배·플핸 적극 활용]
+4) [핵심 베팅 전략 - 정배/일반승 편중 절대 금지 & 데이터 기반 밸류벳]
+- 제공된 공식 부상자 명단(Out/Questionable), 백투백(B2B)·휴식일 피로도, NHL 파워플레이/페널티킬(PP/PK), 해외축구 ClubElo 전력 점수 차이를 반드시 구체적 수치로 인용해 분석하세요.
 - 5경기 이상이면 최소 2경기 이상, 3~4경기면 최소 1경기 이상은 반드시 [역배 일반승] 또는 [플핸(+핸디승)]을 선정하세요.
 - 전체 추천픽에 [일반승(정배/역배)], [핸디캡(마핸/플핸)], [언오버(오버/언더)]가 고르게 섞이되, 핸디캡과 언오버 비중을 넉넉히 잡으세요.
 - 픽 유형 배지: 일반승/마핸은 🟢, 언오버는 🟡, 역배/플핸은 🟣 을 최종 추천픽 끝에 붙이세요.
 5) 각 경기는 아래 4항목 심층 양식으로 작성하세요:
 [종목 | 한국시간] 홈팀(홈) vs 원정팀(원정)
 • 라인/배당: 피나클/해외 또는 프로토 핸디캡 및 언오버 기준점
-• 핵심 지표: 양 팀 시즌·홈/원정 성적, 최근 10경기 흐름, 평균 득실점·득실차 비교
-• 매치업 & 변수: 공수 페이스(템포), 백투백·원정 피로도, 부상/결장 뉴스 및 선발 골리(NHL) 등 승부처
-• 밸류 근거: 왜 일반승 대신 이 라인(마핸/플핸/언오버/역배)이 가장 기대값이 높은지 핵심 정리
+• 핵심 지표: 시즌·홈/원정 성적, 최근 10경기, 득실차 (NHL은 PP/PK·슈팅, 해축은 ClubElo 점수 포함)
+• 매치업 & 변수: 공식 부상/결장자(Out/Questionable), 백투백(B2B)·휴식일 차이, 공수 템포 등 핵심 변수
+• 밸류 근거: 시장 배당 대비 왜 이 라인(마핸/플핸/언오버/역배)의 기대값(EV)이 가장 높은지 핵심 정리
 🌿 최종 추천픽: (예: 유타 재즈 +11.5 핸디승 (플핸) 🟣)
 
 6) 주의: 이 메시지 안에는 조합을 넣지 마세요 (조합은 별도의 마지막 메시지로 따로 발송합니다).
@@ -650,22 +878,25 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
     nhl_res = ""
 
     if not already_sent(date_str, "NBA"):
-        nba_espn = fetch_espn_window("basketball", "nba", start_kst, end_kst)
+        nba_espn, nba_teams = fetch_espn_window("basketball", "nba", start_kst, end_kst)
         if nba_espn:
             nba_sgo = fetch_sportsgameodds("NBA", start_kst, end_kst)
             nba_standings = fetch_espn_standings("basketball", "nba")
-            nba_inj = fetch_en_news_rss("NBA injury report lineup today", max_items=8)
+            nba_inj_official = fetch_espn_nba_injuries(nba_teams)
+            nba_b2b = fetch_fatigue_b2b("basketball", "nba", now_kst, nba_teams)
             nba_block = f"[오늘의 NBA 경기 일정 및 기본 라인]\n{nba_espn}"
             if nba_sgo:
                 nba_block += f"\n\n[SportsGameOdds 피나클/해외 실시간 배당]\n{nba_sgo}"
+            if nba_inj_official:
+                nba_block += f"\n\n[ESPN NBA 공식 부상자 명단 (Out/Doubtful/Questionable)]\n{nba_inj_official}"
+            if nba_b2b:
+                nba_block += f"\n\n[NBA 팀별 백투백(B2B) 및 휴식일 피로도]\n{nba_b2b}"
             if nba_standings:
                 nba_block += f"\n\n[NBA 팀별 시즌·홈/원정·최근10·득실차 지표]\n{nba_standings}"
-            if nba_inj:
-                nba_block += f"\n\n[최신 NBA 부상/결장 뉴스]\n{nba_inj}"
-            title = f"🏀 [{date_str}] 오늘의 NBA 전 경기 분석"
+            title = f"🏀 [{date_str}] 오늘의 NBA 전 경기 심층 분석"
             nba_res = call_gemini_matches(
                 title,
-                "피나클/해외 실시간 배당과 팀별 홈·원정 성적, 최근 10경기, 득실차, 부상 리포트를 종합해 심층 분석하세요.",
+                "피나클/해외 실시간 배당, ESPN 공식 부상자 명단, 백투백(B2B)·휴식일 피로도, 홈/원정·득실차 지표를 종합해 프로 퀀트 수준으로 심층 분석하세요.",
                 nba_block,
             )
             send_telegram_message(nba_res, chat_id, use_html=True)
@@ -673,22 +904,25 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
             time.sleep(8)
 
     if not already_sent(date_str, "NHL"):
-        nhl_espn = fetch_espn_window("hockey", "nhl", start_kst, end_kst)
+        nhl_espn, nhl_teams = fetch_espn_window("hockey", "nhl", start_kst, end_kst)
         if nhl_espn:
             nhl_sgo = fetch_sportsgameodds("NHL", start_kst, end_kst)
-            nhl_standings = fetch_espn_standings("hockey", "nhl")
+            nhl_official = fetch_nhl_official_advanced(nhl_teams)
+            nhl_b2b = fetch_fatigue_b2b("hockey", "nhl", now_kst, nhl_teams)
             nhl_news = fetch_en_news_rss("NHL starting goalies injury report today", max_items=8)
             nhl_block = f"[오늘의 NHL 경기 일정 및 기본 라인]\n{nhl_espn}"
             if nhl_sgo:
                 nhl_block += f"\n\n[SportsGameOdds 피나클/해외 실시간 배당]\n{nhl_sgo}"
-            if nhl_standings:
-                nhl_block += f"\n\n[NHL 팀별 시즌·홈/원정·최근10·득실차 지표]\n{nhl_standings}"
+            if nhl_official:
+                nhl_block += f"\n\n[NHL 공식 고급 지표 (홈/원정·득실·PP%/PK%·슈팅)]\n{nhl_official}"
+            if nhl_b2b:
+                nhl_block += f"\n\n[NHL 팀별 백투백(B2B) 및 휴식일 피로도]\n{nhl_b2b}"
             if nhl_news:
                 nhl_block += f"\n\n[최신 NHL 선발 골리/부상 뉴스]\n{nhl_news}"
-            title = f"🏒 [{date_str}] 오늘의 NHL 전 경기 분석"
+            title = f"🏒 [{date_str}] 오늘의 NHL 전 경기 심층 분석"
             nhl_res = call_gemini_matches(
                 title,
-                "피나클/해외 배당·퍽라인·언오버와 팀별 홈/원정 성적, 최근 10경기, 득실차, 선발 골리 소식을 종합해 심층 분석하세요.",
+                "피나클/해외 배당·퍽라인·언오버와 NHL 공식 PP%/PK%·슈팅·평균득실점, 백투백 피로도, 선발 골리 소식을 종합해 심층 분석하세요.",
                 nhl_block,
             )
             send_telegram_message(nhl_res, chat_id, use_html=True)
@@ -742,21 +976,29 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
         ("soccer", "uefa.nations", "네이션스리그"),
     ]
     blocks = []
+    matchups = []
     for sp, lg, label in leagues:
-        d = fetch_espn_window(sp, lg, start_kst, end_kst)
+        d, _ = fetch_espn_window(sp, lg, start_kst, end_kst)
         if d:
             blocks.append(f"[{label}]\n{d}")
+            for ln in d.splitlines():
+                m = re.search(r"\]\s+(.+?)\(홈.*?\)\s+vs\s+(.+?)\(원정", ln)
+                if m:
+                    matchups.append((m.group(1).strip(), m.group(2).strip()))
     if not blocks:
         return
 
     sgo_soccer = fetch_sportsgameodds("EPL,LA_LIGA,IT_SERIE_A,BUNDESLIGA,LIGUE_1,UEFA_CHAMPIONS_LEAGUE,UEFA_EUROPA_LEAGUE", start_kst, end_kst)
+    dc_text = fetch_clubelo_and_dixon_coles(now_kst, matchups)
     data_block = "\n\n".join(blocks)
     if sgo_soccer:
         data_block += f"\n\n[SportsGameOdds 해외/피나클 배당]\n{sgo_soccer}"
+    if dc_text:
+        data_block += f"\n\n[ClubElo 전력 점수 & Dixon-Coles 통계 모델 확률/기대득점]\n{dc_text}"
 
     res = call_gemini_matches(
         title,
-        "피나클/해외 주요 리그 배당·핸디캡·언오버 기준으로 해당 시간대 해외축구 경기들을 4항목 심층 분석하세요.",
+        "피나클/해외 주요 리그 배당(환급률 제거 관점)과 ClubElo·Dixon-Coles 통계 모델 확률/기대득점을 비교해 기대값(+) 밸류벳 중심으로 4항목 심층 분석하세요.",
         data_block,
     )
     send_telegram_message(res, chat_id, use_html=True)
@@ -790,7 +1032,7 @@ def run_domestic(now_kst: datetime.datetime, date_str: str, chat_id: str) -> Non
         ("soccer", "jpn.1", "J리그"),
         ("soccer", "afc.champions", "AFC 챔피언스리그"),
     ]:
-        d = fetch_espn_window(sp, lg, start_kst, end_kst)
+        d, _ = fetch_espn_window(sp, lg, start_kst, end_kst)
         if d:
             asia_blocks.append(f"[{label}]\n{d}")
     asia_text = "\n".join(asia_blocks) if asia_blocks else "오늘 열리는 K리그1/K리그2/J리그/AFC 챔피언스리그 경기 없음."
