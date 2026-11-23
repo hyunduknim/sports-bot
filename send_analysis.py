@@ -703,7 +703,7 @@ def raw_gemini_call(sys_inst: str, prompt: str) -> str:
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=sys_inst,
-                        temperature=0.35,
+                        temperature=0.15,
                     ),
                 )
                 if response and response.text:
@@ -727,14 +727,18 @@ def call_gemini_matches(title: str, guide: str, data_block: str) -> str:
 1) [경기 데이터]에서 오늘 날짜(KST)로 실제 열리는 것이 확인된 모든 경기를 빠짐없이 심층 분석하되, 항목별로 줄바꿈을 깔끔하게 정리하세요.
 2) 텔레그램 메시지용이므로 *, **, #, --- 같은 마크다운 기호와 빨간색 이모지(🔴, 🟥)는 절대 쓰지 마세요.
 3) 모든 팀명은 100% 한국어 풀네임으로 적고 (홈) / (원정)과 한국시간(KST)을 표시하세요.
-4) [핵심 베팅 전략 - 정배/일반승 편중 절대 금지 & 데이터 기반 밸류벳]
-- 제공된 공식 부상자 명단(Out/Questionable), 백투백(B2B)·휴식일 피로도, NHL 파워플레이/페널티킬(PP/PK), 해외축구 ClubElo 전력 점수 차이를 반드시 구체적 수치로 인용해 분석하세요.
-- 5경기 이상이면 최소 2경기 이상, 3~4경기면 최소 1경기 이상은 반드시 [역배 일반승] 또는 [플핸(+핸디승)]을 선정하세요.
-- 전체 추천픽에 [일반승(정배/역배)], [핸디캡(마핸/플핸)], [언오버(오버/언더)]가 고르게 섞이되, 핸디캡과 언오버 비중을 넉넉히 잡으세요.
+4) [핵심 베팅 전략 - 적중률 최우선 & 근거 없는 억지 픽 절대 금지]
+- 최우선 목표는 '실제 적중률 극대화'입니다. 공식 부상자 명단(Out/Questionable), 백투백(B2B)·휴식일 피로도, NHL PP%/PK%·슈팅, 해외축구 ClubElo·Dixon-Coles 확률을 반드시 교차 검증해 가장 적중 확률이 높은 픽을 고르세요.
+- 억지로 역배나 무리한 마핸을 끼워 넣지 마세요! 역배 일반승이나 플핸(+핸디)은 '상대 주전 결장 + 백투백 원정 피로 + 홈 강세'처럼 뚜렷한 데이터 근거가 겹칠 때만 선택하세요.
+- 종목별 낙첨 방지 수칙:
+  * NBA: -10.5 이상 과도한 대량 마핸은 가비지 타임 낙첨 위험이 크므로 피하고, 부상·페이스 근거가 뚜렷한 언오버, 적정 마핸(-3.5~-7.5), 근거 있는 플핸을 우선하세요.
+  * NHL: 1골 차 접전과 연장이 잦으므로 무리한 -1.5 마핸(퍽라인) 남발을 금지하고, PP%/PK%·골리 근거가 확실한 언오버, +1.5 플핸, 확실한 일반승을 우선하세요.
+  * 해외축구: Dixon-Coles 모델 확률과 ClubElo 격차가 피나클 배당과 일치하는 안정적 핸디캡·언오버·승부 라인을 우선하세요.
+- [최소 배당 1.31배 & 유형 균형 배분] 1.30배 이하의 극저배당 일반승은 절대 추천하지 마세요! 단, 전체 경기를 일반승만으로 몰지 말고 경기 성격에 맞춰 [1.31배 이상 일반승 약 40~50%], [핸디캡(마핸/플핸) 약 25~30%], [언오버 약 25~30%] 비율로 적절하게 골고루 나눠주세요. (1.30배 이하 저배당 경기는 마핸·언오버·근거 있는 플핸으로 전환하고, 1.31배 이상에서 승패가 확실한 경기는 일반승을 적극 활용하세요.)
 - 픽 유형 배지: 일반승/마핸은 🟢, 언오버는 🟡, 역배/플핸은 🟣 을 최종 추천픽 끝에 붙이세요.
 5) 각 경기는 아래 4항목 심층 양식으로 작성하세요:
 [종목 | 한국시간] 홈팀(홈) vs 원정팀(원정)
-• 라인/배당: 피나클/해외 또는 프로토 핸디캡 및 언오버 기준점
+• 라인/배당: 베트맨 프로토 승부식 배당(일반승·핸디캡·언오버 기준점)을 최우선으로 표기 (프로토 미발매 경기만 피나클/해외 배당의 프로토 환산치로 표기, 1.31배 이상 기준도 프로토 배당 기준 적용)
 • 핵심 지표: 시즌·홈/원정 성적, 최근 10경기, 득실차 (NHL은 PP/PK·슈팅, 해축은 ClubElo 점수 포함)
 • 매치업 & 변수: 공식 부상/결장자(Out/Questionable), 백투백(B2B)·휴식일 차이, 공수 템포 등 핵심 변수
 • 밸류 근거: 시장 배당 대비 왜 이 라인(마핸/플핸/언오버/역배)의 기대값(EV)이 가장 높은지 핵심 정리
@@ -751,8 +755,9 @@ def call_gemini_matches(title: str, guide: str, data_block: str) -> str:
 
 def call_gemini_combos(title: str, combo_rules: str, picks_context: str) -> str:
     sys_inst = (
-        "당신은 스포츠 베팅 조합 전문 퀀트입니다. "
-        "반드시 제공된 [오늘의 추천픽 목록] 안에서만 경기를 골라 조합을 구성하세요. 없는 경기를 지어내지 마세요. "
+        "당신은 적중률 최우선 스포츠 베팅 조합 전문 퀀트입니다. "
+        "반드시 제공된 [오늘의 추천픽 목록] 안에서 부상·백투백·Elo·PP/PK 등 핵심 데이터 근거가 가장 확실하게 겹치는 최상위 확신 경기만 엄선해 조합하세요. "
+        "50:50 애매한 접전 경기, 억지 역배, 그리고 1.30배 이하 극저배당 픽은 조합에서 과감히 제외하고 반드시 1.31배 이상 픽만 고르세요. 없는 경기를 지어내지 마세요. "
         "100% 한국어로 작성하고 마크다운 기호(*, **, #)와 빨간색 이모지(🔴, 🟥)는 절대 쓰지 마세요."
     )
     prompt = (
@@ -873,6 +878,7 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
     start_kst = now_kst.replace(hour=7, minute=0, second=0, microsecond=0)
     end_kst = now_kst.replace(hour=16, minute=0, second=0, microsecond=0)
     fetch_statshawk_ping()
+    wisetoto_today = fetch_wisetoto_today(now_kst)
 
     nba_res = ""
     nhl_res = ""
@@ -885,8 +891,10 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
             nba_inj_official = fetch_espn_nba_injuries(nba_teams)
             nba_b2b = fetch_fatigue_b2b("basketball", "nba", now_kst, nba_teams)
             nba_block = f"[오늘의 NBA 경기 일정 및 기본 라인]\n{nba_espn}"
+            if wisetoto_today:
+                nba_block += f"\n\n[베트맨 프로토 승부식 오늘({now_kst.month:02d}.{now_kst.day:02d}) 공식 배당표 - 최우선 기준]\n{wisetoto_today}"
             if nba_sgo:
-                nba_block += f"\n\n[SportsGameOdds 피나클/해외 실시간 배당]\n{nba_sgo}"
+                nba_block += f"\n\n[SportsGameOdds 피나클/해외 배당 (밸류 대조 참고용)]\n{nba_sgo}"
             if nba_inj_official:
                 nba_block += f"\n\n[ESPN NBA 공식 부상자 명단 (Out/Doubtful/Questionable)]\n{nba_inj_official}"
             if nba_b2b:
@@ -911,8 +919,10 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
             nhl_b2b = fetch_fatigue_b2b("hockey", "nhl", now_kst, nhl_teams)
             nhl_news = fetch_en_news_rss("NHL starting goalies injury report today", max_items=8)
             nhl_block = f"[오늘의 NHL 경기 일정 및 기본 라인]\n{nhl_espn}"
+            if wisetoto_today:
+                nhl_block += f"\n\n[베트맨 프로토 승부식 오늘({now_kst.month:02d}.{now_kst.day:02d}) 공식 배당표 - 최우선 기준]\n{wisetoto_today}"
             if nhl_sgo:
-                nhl_block += f"\n\n[SportsGameOdds 피나클/해외 실시간 배당]\n{nhl_sgo}"
+                nhl_block += f"\n\n[SportsGameOdds 피나클/해외 배당 (밸류 대조 참고용)]\n{nhl_sgo}"
             if nhl_official:
                 nhl_block += f"\n\n[NHL 공식 고급 지표 (홈/원정·득실·PP%/PK%·슈팅)]\n{nhl_official}"
             if nhl_b2b:
@@ -936,10 +946,10 @@ def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None
         if nhl_res:
             ctx_parts.append(f"[NHL 추천픽]\n{extract_picks_summary(nhl_res)}")
         combo_rules = (
-            "반드시 아래 3가지 조합을 순서대로 구성해 줘 (일반승 위주 절대 금지!):\n"
-            "① NBA 조합 3폴더 (일반승 위주 금지 — 핸디캡 마핸/플핸, 언오버, 역배 중심으로 구성)\n"
-            "② NHL 조합 3폴더 (일반승 위주 금지 — 퍽라인 핸디캡, 언오버, 역배 중심으로 구성)\n"
-            "③ NBA + NHL 핸디·언오버 3폴더 (일반승 제외! 오직 NBA·NHL의 핸디캡과 언오버만 섞어서 3폴더 구성)"
+            "반드시 아래 3가지 조합을 적중률 최우선으로 구성해 줘:\n"
+            "① NBA 조합 3폴더 (적중률 최우선 — 확실한 일반승을 적극 포함하고, 근거 뚜렷한 핸디캡·언오버와 자유롭게 조합)\n"
+            "② NHL 조합 3폴더 (적중률 최우선 — 확실한 일반승을 적극 포함하고, +1.5 플핸·언오버와 자유롭게 조합)\n"
+            "③ NBA + NHL 핸디·언오버 3폴더 (오직 NBA·NHL의 가장 확실한 핸디캡과 언오버만 섞어서 3폴더 구성)"
         )
         combo_msg = call_gemini_combos(
             f"🎯 [{date_str}] 아침 7시 NBA · NHL 최종 3폴더 추천 조합",
@@ -991,8 +1001,11 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
     sgo_soccer = fetch_sportsgameodds("EPL,LA_LIGA,IT_SERIE_A,BUNDESLIGA,LIGUE_1,UEFA_CHAMPIONS_LEAGUE,UEFA_EUROPA_LEAGUE", start_kst, end_kst)
     dc_text = fetch_clubelo_and_dixon_coles(now_kst, matchups)
     data_block = "\n\n".join(blocks)
+    wisetoto_today = fetch_wisetoto_today(now_kst)
+    if wisetoto_today:
+        data_block += f"\n\n[베트맨 프로토 승부식 오늘({now_kst.month:02d}.{now_kst.day:02d}) 공식 배당표 - 최우선 기준]\n{wisetoto_today}"
     if sgo_soccer:
-        data_block += f"\n\n[SportsGameOdds 해외/피나클 배당]\n{sgo_soccer}"
+        data_block += f"\n\n[SportsGameOdds 해외/피나클 배당 (밸류 대조 참고용)]\n{sgo_soccer}"
     if dc_text:
         data_block += f"\n\n[ClubElo 전력 점수 & Dixon-Coles 통계 모델 확률/기대득점]\n{dc_text}"
 
@@ -1006,8 +1019,8 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
 
     time.sleep(5)
     combo_rules = (
-        "반드시 아래 2가지 해외축구 3폴더 조합을 순서대로 구성해 줘:\n"
-        "① 안정형 3폴더 조합 (일반승 위주 금지! 핸디캡·플핸·언오버 위주로 안정성과 배당을 동시에 확보)\n"
+        "반드시 아래 2가지 해외축구 3폴더 조합을 적중률 최우선으로 구성해 줘:\n"
+        "① 안정형 3폴더 조합 (적중률 최우선 — ClubElo·Dixon-Coles 근거가 가장 확실한 일반승 중심, 필요 시 안전한 핸디/언오버 혼합)\n"
         "② 일반승 + 핸디캡 + 언오버 3폴더 조합 (1폴더 일반승 + 2폴더 핸디캡 + 3폴더 언오버, 각 유형 정확히 1경기씩 구성)"
     )
     combo_msg = call_gemini_combos(
@@ -1059,8 +1072,8 @@ def run_domestic(now_kst: datetime.datetime, date_str: str, chat_id: str) -> Non
     if picks_sum:
         time.sleep(5)
         combo_rules = (
-            "반드시 아래 조합을 구성해 줘:\n"
-            "① 국내 조합 3폴더 (일반승 위주 절대 금지! 핸디캡 마핸/플핸, 언오버, 역배 중심으로 3폴더 구성)"
+            "반드시 아래 조합을 적중률 최우선으로 구성해 줘:\n"
+            "① 국내 조합 3폴더 (적중률 최우선 — 확실한 일반승을 적극 포함하고, 근거가 뚜렷한 핸디캡·언오버와 자유롭게 조합)"
         )
         combo_msg = call_gemini_combos(
             f"🎯 [{date_str}] 국내 · 아시아 최종 3폴더 추천 조합",
