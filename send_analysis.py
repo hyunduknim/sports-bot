@@ -727,15 +727,14 @@ def call_gemini_matches(title: str, guide: str, data_block: str) -> str:
 1) [경기 데이터]에서 오늘 날짜(KST)로 실제 열리는 것이 확인된 모든 경기를 빠짐없이 심층 분석하되, 항목별로 줄바꿈을 깔끔하게 정리하세요.
 2) 텔레그램 메시지용이므로 *, **, #, --- 같은 마크다운 기호와 빨간색 이모지(🔴, 🟥)는 절대 쓰지 마세요.
 3) 모든 팀명은 100% 한국어 풀네임으로 적고 (홈) / (원정)과 한국시간(KST)을 표시하세요.
-4) [핵심 베팅 전략 - 적중률 최우선 & 근거 없는 억지 픽 절대 금지]
-- 최우선 목표는 '실제 적중률 극대화'입니다. 공식 부상자 명단(Out/Questionable), 백투백(B2B)·휴식일 피로도, NHL PP%/PK%·슈팅, 해외축구 ClubElo·Dixon-Coles 확률을 반드시 교차 검증해 가장 적중 확률이 높은 픽을 고르세요.
-- 억지로 역배나 무리한 마핸을 끼워 넣지 마세요! 역배 일반승이나 플핸(+핸디)은 '상대 주전 결장 + 백투백 원정 피로 + 홈 강세'처럼 뚜렷한 데이터 근거가 겹칠 때만 선택하세요.
-- 종목별 낙첨 방지 수칙:
-  * NBA: -10.5 이상 과도한 대량 마핸은 가비지 타임 낙첨 위험이 크므로 피하고, 부상·페이스 근거가 뚜렷한 언오버, 적정 마핸(-3.5~-7.5), 근거 있는 플핸을 우선하세요.
-  * NHL: 1골 차 접전과 연장이 잦으므로 무리한 -1.5 마핸(퍽라인) 남발을 금지하고, PP%/PK%·골리 근거가 확실한 언오버, +1.5 플핸, 확실한 일반승을 우선하세요.
-  * 해외축구: Dixon-Coles 모델 확률과 ClubElo 격차가 피나클 배당과 일치하는 안정적 핸디캡·언오버·승부 라인을 우선하세요.
-- [최소 배당 1.31배 & 유형 균형 배분] 1.30배 이하의 극저배당 일반승은 절대 추천하지 마세요! 단, 전체 경기를 일반승만으로 몰지 말고 경기 성격에 맞춰 [1.31배 이상 일반승 약 40~50%], [핸디캡(마핸/플핸) 약 25~30%], [언오버 약 25~30%] 비율로 적절하게 골고루 나눠주세요. (1.30배 이하 저배당 경기는 마핸·언오버·근거 있는 플핸으로 전환하고, 1.31배 이상에서 승패가 확실한 경기는 일반승을 적극 활용하세요.)
-- 픽 유형 배지: 일반승/마핸은 🟢, 언오버는 🟡, 역배/플핸은 🟣 을 최종 추천픽 끝에 붙이세요.
+4) [핵심 베팅 전략 - 적중률 극대화 & ⚪ 관망(패스) 필터링]
+- 전 경기를 분석하되, 경기 수에 따라 유연하게 선별하세요: 5경기 이상 많을 때는 50:50 애매한 경기(약 30~40%)를 과감히 [⚪ 관망(패스)] 처리하고 진짜 근거가 확실한 상위 ⭐ S급 주력 / A급 추천 경기만 픽을 내세요. 반면 3~4경기 이하로 경기 수가 적을 때는 억지로 관망을 채우지 말고, 각 경기에서 가장 적중 확률이 높은 라인(1.31배 이상 일반승·언더·적정 핸디)을 찾아 ⭐ S급 / A급 추천픽을 제시하세요.
+- [최소 배당 1.31배 & 유형 균형] 1.30배 이하 극저배당 일반승은 금지하며, 선별된 추천 경기 안에서 [1.31배 이상 일반승], [안전 핸디캡], [근거 확실한 언오버]를 자연스럽게 균형 배분하세요.
+- [실전 낙첨 패턴 원천 차단 수칙]:
+  * NBA 금지 함정: ① 상위 강팀을 상대로 약팀에 [+10.5 이상 대량 플핸] 억지 추천 금지(대패 위험). ② [원정팀 -7.5 이상 대량 마핸] 금지. 대신 부상·수비 페이스 근거가 뚜렷한 언오버(특히 언더), 1.31배 이상 확실한 일반승, 홈 적정 마핸(-3.5~-7.5)을 최우선으로 삼으세요.
+  * NHL 금지 함정: ① [NHL -1.5 마핸]은 이기고도 1골 차로 낙첨되는 경우가 매우 잦으므로 원칙적 금지! 승리가 유력하면 1.31배 이상 [일반승]을 고르세요. ② 기준점 6.5에서는 무리한 오버보다 수비/골리 근거 기반 [6.5 언더]를 우선 검토하세요. ③ 원정 약팀 +1.5 플핸은 막판 엠프티넷(빈 골대) 2골 차 패배 위험이 크므로 확실한 접전 근거가 없으면 관망 처리하세요.
+  * 해외축구: ClubElo 격차와 Dixon-Coles 모델 확률이 피나클 배당과 일치하는 경기만 S급/A급으로 선별하고, 불확실한 무승부 접전은 과감히 관망 처리하세요.
+- 픽 유형 배지: 일반승/마핸은 🟢, 언오버는 🟡, 역배/플핸은 🟣 을 붙이고, 패스 경기는 '⚪ 관망(패스)'로 표기하세요.
 5) 반드시 맨 위에 [📌 오늘의 분석 방식]을 2~3줄로 먼저 밝힌 뒤, 각 경기마다 픽만 던지지 말고 아래 양식대로 깊이 있는 분석글을 충실하게 작성하세요:
 
 📌 [오늘의 분석 방식]
@@ -747,7 +746,7 @@ def call_gemini_matches(title: str, guide: str, data_block: str) -> str:
 • 핵심 지표: 시즌·홈/원정 성적, 최근 10경기, 평균 득실·득실차 (NHL은 PP%/PK%·슈팅, 해축은 ClubElo·Dixon-Coles 확률 포함)
 • 매치업 & 변수: 공식 부상/결장자(Out/Questionable), 백투백(B2B)·휴식일 차이, 공수 템포 등 핵심 변수
 • 상세 분석글: 양 팀의 전술 상성, 경기 흐름 예상, 그리고 프로토 배당 대비 왜 이 픽(일반승/마핸/플핸/언오버/역배)이 가장 적중 확률과 밸류가 높은지 3~4문장으로 읽을거리 있게 충실히 서술
-🌿 최종 추천픽: (예: 유타 재즈 +11.5 핸디승 (플핸) 🟣)
+🌿 최종 추천픽: [⭐ S급 주력] 또는 [A급 추천] + 픽 내용 + 배지(🟢/🟡/🟣)  ※ 애매한 경기는 반드시 '🌿 최종 추천픽: ⚪ 관망(패스) — 변수 과다'로 표기
 
 6) 주의: 이 메시지 안에는 조합을 넣지 마세요 (조합은 별도의 마지막 메시지로 따로 발송합니다).
 """
@@ -781,12 +780,25 @@ def call_gemini_combos(title: str, combo_rules: str, picks_context: str) -> str:
 
 
 def extract_picks_summary(analysis_text: str) -> str:
-    lines = [
-        ln.strip()
-        for ln in analysis_text.splitlines()
-        if ("vs" in ln or "최종 추천픽" in ln or "라인/배당" in ln)
-    ]
-    return "\n".join(lines)
+    blocks = []
+    cur_match = ""
+    cur_line = ""
+    for raw_ln in analysis_text.splitlines():
+        ln = raw_ln.strip()
+        if "vs" in ln and ln.startswith("["):
+            cur_match = ln
+            cur_line = ""
+        elif "라인/배당" in ln:
+            cur_line = ln
+        elif "최종 추천픽" in ln:
+            if "관망" in ln or "패스" in ln:
+                cur_match = ""
+                continue
+            part = [p for p in (cur_match, cur_line, ln) if p]
+            if part:
+                blocks.append("\n".join(part))
+            cur_match = ""
+    return "\n\n".join(blocks)
 
 
 def is_slot_ready_to_grade(item: dict, now_kst: datetime.datetime) -> bool:
@@ -866,14 +878,14 @@ def grade_previous_picks(now_kst: datetime.datetime, chat_id: str) -> None:
 
 
 def record_picks_to_history(slot: str, date_str: str, analysis_text: str) -> None:
-    lines = [ln.strip() for ln in analysis_text.splitlines() if ("vs" in ln or "최종 추천픽" in ln)]
+    filtered = extract_picks_summary(analysis_text)
     history = load_history()
     history.append(
         {
             "date": date_str,
             "slot": slot,
-            "status": "pending" if lines else "empty",
-            "picks_text": "\n".join(lines),
+            "status": "pending" if filtered else "empty",
+            "picks_text": filtered,
         }
     )
     save_history(history)
