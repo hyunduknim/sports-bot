@@ -764,11 +764,16 @@ def call_gemini_matches(title: str, guide: str, data_block: str) -> str:
 4) [핵심 베팅 전략 - 적중률 극대화 & ⚪ 관망(패스) 필터링]
 - 전 경기를 분석하되, 경기 수에 따라 유연하게 선별하세요: 5경기 이상 많을 때는 50:50 애매한 경기(약 30~40%)를 과감히 [⚪ 관망(패스)] 처리하고 진짜 근거가 확실한 상위 ⭐ S급 주력 / A급 추천 경기만 픽을 내세요. 반면 3~4경기 이하로 경기 수가 적을 때는 억지로 관망을 채우지 말고, 각 경기에서 가장 적중 확률이 높은 라인(1.31배 이상 일반승·언더·적정 핸디)을 찾아 ⭐ S급 / A급 추천픽을 제시하세요.
 - [최소 배당 1.31배 & 유형 균형] 1.30배 이하 극저배당 일반승은 금지하며, 선별된 추천 경기 안에서 [1.31배 이상 일반승], [안전 핸디캡], [근거 확실한 언오버]를 자연스럽게 균형 배분하세요.
-- [🔥 샤프 자금(오즈 무브) & 피나클 공정 승률(+EV) 최우선 원칙]: 피나클 배당이 오프닝 대비 하락(🔥샤프배당하락)하거나, 피나클 무수수료 공정승률(fairOdds)이 높으면서 프로토 배당이 1.31배 이상으로 유리하게 책정된 경기를 최우선 ⭐ S급 주력으로 올리세요. 피나클 샤프 자금 흐름과 정반대 방향의 억지 역배/마핸은 절대 금지합니다.
-- [실전 낙첨 패턴 원천 차단 수칙]:
-  * NBA 금지 함정: ① 상위 강팀을 상대로 약팀에 [+10.5 이상 대량 플핸] 억지 추천 금지(대패 위험). ② [원정팀 -7.5 이상 대량 마핸] 금지. 대신 부상·수비 페이스 근거가 뚜렷한 언오버(특히 언더), 1.31배 이상 확실한 일반승, 홈 적정 마핸(-3.5~-7.5)을 최우선으로 삼으세요.
-  * NHL 금지 함정: ① [NHL -1.5 마핸]은 이기고도 1골 차로 낙첨되는 경우가 매우 잦으므로 원칙적 금지! 승리가 유력하면 1.31배 이상 [일반승]을 고르세요. ② 기준점 6.5에서는 무리한 오버보다 수비/골리 근거 기반 [6.5 언더]를 우선 검토하세요. ③ 원정 약팀 +1.5 플핸은 막판 엠프티넷(빈 골대) 2골 차 패배 위험이 크므로 확실한 접전 근거가 없으면 관망 처리하세요.
-  * 해외축구: ClubElo 격차와 Dixon-Coles 모델 확률이 피나클 배당과 일치하는 경기만 S급/A급으로 선별하고, 불확실한 무승부 접전은 과감히 관망 처리하세요.
+- [🏆 실증 연구 기반 적중률 극대화 4대 원칙]:
+  1) 피나클 시장 정합성 최우선: 피나클 무수수료 공정승률(fairOdds) 60% 이상이면서 오프닝 대비 배당이 하락(🔥샤프배당하락)하고, 프로토 배당이 1.31배 이상인 경기를 최우선 ⭐ S급 주력으로 선정하세요. 피나클 샤프 흐름에 역행하는 역발상·억지 역배는 절대 금지합니다.
+  2) NBA 실증 수칙:
+     - [백투백(B2B) 팀 페이드]: 백투백 팀의 실제 승률은 약 42%대로 급락하므로, '휴식 우위 팀 vs 백투백 팀' 매치업에서는 핸디캡보다 휴식 팀의 [1.31배 이상 일반승]을 최우선으로 고르세요.
+     - [NBA 컵 득실차 주의]: NBA 컵(그룹 스테이지) 기간에는 득실차가 순위에 반영되어 강팀이 끝까지 점수 차를 벌리므로 약팀 대량 플핸(+9.5 이상)을 절대 금지합니다.
+     - [대량 원정 마핸 금지]: 원정팀 -7.5 이상 대량 마핸은 피하고, 부상·수비 근거가 확실한 언오버(특히 언더), 1.31배 이상 확실한 일반승, 홈 적정 마핸(-3.5~-7.5)에 집중하세요.
+  3) 해외축구 실증 수칙 (무승부 함정 차단):
+     - Dixon-Coles 모델의 무승부 확률이 26% 이상인 접전 경기에서는 [일반승 금지]! 반드시 [⚪ 관망(패스)], [언오버 2.5], 또는 무승부 시에도 적중하는 [+1.0 핸디승]으로만 접근하세요.
+     - 해외축구 [일반승]은 반드시 피나클 공정승률 60% 이상 + ClubElo 130점 이상 격차 + 프로토 1.31배 이상 조건을 충족할 때만 선택하세요.
+  4) 적중률 랭킹 명시: 모든 경기 중 가장 적중 확률이 높은 최상위 2경기만 [⭐ S급 주력]으로 지정하세요.
 - 픽 유형 배지: 일반승/마핸은 🟢, 언오버는 🟡, 역배/플핸은 🟣 을 붙이고, 패스 경기는 '⚪ 관망(패스)'로 표기하세요.
 5) 반드시 맨 위에 [📌 오늘의 분석 방식]을 2~3줄로 먼저 밝힌 뒤, 각 경기마다 픽만 던지지 말고 아래 양식대로 깊이 있는 분석글을 충실하게 작성하세요:
 
@@ -926,91 +931,60 @@ def record_picks_to_history(slot: str, date_str: str, analysis_text: str) -> Non
     save_history(history)
 
 
-def run_nba_nhl(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None:
+def run_nba_only(now_kst: datetime.datetime, date_str: str, chat_id: str) -> None:
     start_kst = now_kst.replace(hour=7, minute=0, second=0, microsecond=0)
     end_kst = now_kst.replace(hour=16, minute=0, second=0, microsecond=0)
     fetch_statshawk_ping()
     wisetoto_today = fetch_wisetoto_today(now_kst)
 
-    nba_res = ""
-    nhl_res = ""
+    if already_sent(date_str, "NBA"):
+        return
 
-    if not already_sent(date_str, "NBA"):
-        nba_espn, nba_teams = fetch_espn_window("basketball", "nba", start_kst, end_kst)
-        if nba_espn:
-            nba_sgo = fetch_sportsgameodds("NBA", start_kst, end_kst)
-            nba_standings = fetch_espn_standings("basketball", "nba")
-            nba_inj_official = fetch_espn_nba_injuries(nba_teams)
-            nba_b2b = fetch_fatigue_b2b("basketball", "nba", now_kst, nba_teams)
-            nba_block = f"[오늘의 NBA 경기 일정 및 기본 라인]\n{nba_espn}"
-            if wisetoto_today:
-                nba_block += f"\n\n[베트맨 프로토 승부식 오늘({now_kst.month:02d}.{now_kst.day:02d}) 공식 배당표 - 최우선 기준]\n{wisetoto_today}"
-            if nba_sgo:
-                nba_block += f"\n\n[SportsGameOdds 피나클/해외 배당 (밸류 대조 참고용)]\n{nba_sgo}"
-            if nba_inj_official:
-                nba_block += f"\n\n[ESPN NBA 공식 부상자 명단 (Out/Doubtful/Questionable)]\n{nba_inj_official}"
-            if nba_b2b:
-                nba_block += f"\n\n[NBA 팀별 백투백(B2B) 및 휴식일 피로도]\n{nba_b2b}"
-            if nba_standings:
-                nba_block += f"\n\n[NBA 팀별 시즌·홈/원정·최근10·득실차 지표]\n{nba_standings}"
-            title = f"🏀 [{date_str}] 오늘의 NBA 전 경기 심층 분석"
-            nba_res = call_gemini_matches(
-                title,
-                "피나클/해외 실시간 배당, ESPN 공식 부상자 명단, 백투백(B2B)·휴식일 피로도, 홈/원정·득실차 지표를 종합해 프로 퀀트 수준으로 심층 분석하세요.",
-                nba_block,
-            )
-            send_telegram_message(nba_res, chat_id, use_html=True)
-            record_picks_to_history("NBA", date_str, nba_res)
-            time.sleep(8)
+    nba_espn, nba_teams = fetch_espn_window("basketball", "nba", start_kst, end_kst)
+    if not nba_espn:
+        return
 
-    if not already_sent(date_str, "NHL"):
-        nhl_espn, nhl_teams = fetch_espn_window("hockey", "nhl", start_kst, end_kst)
-        if nhl_espn:
-            nhl_sgo = fetch_sportsgameodds("NHL", start_kst, end_kst)
-            nhl_official = fetch_nhl_official_advanced(nhl_teams)
-            nhl_b2b = fetch_fatigue_b2b("hockey", "nhl", now_kst, nhl_teams)
-            nhl_news = fetch_en_news_rss("NHL starting goalies injury report today", max_items=8)
-            nhl_block = f"[오늘의 NHL 경기 일정 및 기본 라인]\n{nhl_espn}"
-            if wisetoto_today:
-                nhl_block += f"\n\n[베트맨 프로토 승부식 오늘({now_kst.month:02d}.{now_kst.day:02d}) 공식 배당표 - 최우선 기준]\n{wisetoto_today}"
-            if nhl_sgo:
-                nhl_block += f"\n\n[SportsGameOdds 피나클/해외 배당 (밸류 대조 참고용)]\n{nhl_sgo}"
-            if nhl_official:
-                nhl_block += f"\n\n[NHL 공식 고급 지표 (홈/원정·득실·PP%/PK%·슈팅)]\n{nhl_official}"
-            if nhl_b2b:
-                nhl_block += f"\n\n[NHL 팀별 백투백(B2B) 및 휴식일 피로도]\n{nhl_b2b}"
-            if nhl_news:
-                nhl_block += f"\n\n[최신 NHL 선발 골리/부상 뉴스]\n{nhl_news}"
-            title = f"🏒 [{date_str}] 오늘의 NHL 전 경기 심층 분석"
-            nhl_res = call_gemini_matches(
-                title,
-                "피나클/해외 배당·퍽라인·언오버와 NHL 공식 PP%/PK%·슈팅·평균득실점, 백투백 피로도, 선발 골리 소식을 종합해 심층 분석하세요.",
-                nhl_block,
-            )
-            send_telegram_message(nhl_res, chat_id, use_html=True)
-            record_picks_to_history("NHL", date_str, nhl_res)
-            time.sleep(6)
+    nba_sgo = fetch_sportsgameodds("NBA", start_kst, end_kst)
+    nba_standings = fetch_espn_standings("basketball", "nba")
+    nba_inj_official = fetch_espn_nba_injuries(nba_teams)
+    nba_b2b = fetch_fatigue_b2b("basketball", "nba", now_kst, nba_teams)
 
-    if (nba_res or nhl_res) and not already_sent(date_str, "NBA_NHL_조합"):
-        ctx_parts = []
-        if nba_res:
-            ctx_parts.append(f"[NBA 추천픽]\n{extract_picks_summary(nba_res)}")
-        if nhl_res:
-            ctx_parts.append(f"[NHL 추천픽]\n{extract_picks_summary(nhl_res)}")
+    nba_block = f"[오늘의 NBA 경기 일정 및 기본 라인]\n{nba_espn}"
+    if wisetoto_today:
+        nba_block += f"\n\n[베트맨 프로토 승부식 오늘({now_kst.month:02d}.{now_kst.day:02d}) 공식 배당표 - 최우선 기준]\n{wisetoto_today}"
+    if nba_sgo:
+        nba_block += f"\n\n[SportsGameOdds 피나클/해외 배당 & 샤프 자금 흐름]\n{nba_sgo}"
+    if nba_inj_official:
+        nba_block += f"\n\n[ESPN NBA 공식 부상자 명단 (Out/Doubtful/Questionable)]\n{nba_inj_official}"
+    if nba_b2b:
+        nba_block += f"\n\n[NBA 팀별 백투백(B2B) 및 휴식일 피로도]\n{nba_b2b}"
+    if nba_standings:
+        nba_block += f"\n\n[NBA 팀별 시즌·홈/원정·최근10·득실차 지표]\n{nba_standings}"
+
+    title = f"🏀 [{date_str}] 오늘의 NBA 전 경기 심층 분석"
+    nba_res = call_gemini_matches(
+        title,
+        "베트맨 프로토 배당 최우선 + 피나클 샤프 배당 하락/공정승률, ESPN 공식 부상자 명단, 백투백(B2B)·휴식일 피로도, 홈/원정·득실차 지표를 종합해 NBA 집중 심층 분석을 작성하세요.",
+        nba_block,
+    )
+    send_telegram_message(nba_res, chat_id, use_html=True)
+    record_picks_to_history("NBA", date_str, nba_res)
+
+    picks_sum = extract_picks_summary(nba_res)
+    if picks_sum:
+        time.sleep(5)
         combo_rules = (
-            "반드시 아래 3가지 조합을 적중률 최우선으로 구성해 줘:\n"
-            "① NBA 조합 3폴더 (적중률 최우선 — 확실한 일반승을 적극 포함하고, 근거 뚜렷한 핸디캡·언오버와 자유롭게 조합)\n"
-            "② NHL 조합 3폴더 (적중률 최우선 — 확실한 일반승을 적극 포함하고, +1.5 플핸·언오버와 자유롭게 조합)\n"
-            "③ NBA + NHL 핸디·언오버 3폴더 (오직 NBA·NHL의 가장 확실한 핸디캡과 언오버만 섞어서 3폴더 구성)"
+            "반드시 아래 2가지 NBA 전용 조합을 적중률 최우선(1.31배 이상)으로 구성해 줘:\n"
+            "① NBA 최정예 주력 2폴더 (가장 확실한 ⭐ S급 2경기 — 일반승·언더·적정 핸디 중 적중률 최우선)\n"
+            "② NBA 밸류 3폴더 (1.31배 이상 일반승 + 핸디캡 + 언오버를 균형 있게 섞은 3폴더)"
         )
         combo_msg = call_gemini_combos(
-            f"🎯 [{date_str}] 아침 7시 NBA · NHL 최종 3폴더 추천 조합",
+            f"🎯 [{date_str}] 아침 7시 NBA 최종 추천 조합",
             combo_rules,
-            "\n\n".join(ctx_parts),
+            picks_sum,
         )
         if combo_msg:
             send_telegram_message(combo_msg, chat_id, use_html=True)
-            record_picks_to_history("NBA_NHL_조합", date_str, "")
 
 
 def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str, is_weekend: bool) -> None:
@@ -1071,8 +1045,8 @@ def run_overseas_soccer(now_kst: datetime.datetime, date_str: str, chat_id: str,
 
     time.sleep(5)
     combo_rules = (
-        "반드시 아래 2가지 해외축구 3폴더 조합을 적중률 최우선으로 구성해 줘:\n"
-        "① 안정형 3폴더 조합 (적중률 최우선 — ClubElo·Dixon-Coles 근거가 가장 확실한 일반승 중심, 필요 시 안전한 핸디/언오버 혼합)\n"
+        "반드시 아래 2가지 해외축구 조합을 적중률 최우선(1.31배 이상, 무승부 위험 경기 일반승 제외)으로 구성해 줘:\n"
+        "① 최정예 안정형 주력 2폴더 (가장 확실한 ⭐ S급 2경기만 엄선 — 적중률 최우선)\n"
         "② 일반승 + 핸디캡 + 언오버 3폴더 조합 (1폴더 일반승 + 2폴더 핸디캡 + 3폴더 언오버, 각 유형 정확히 1경기씩 구성)"
     )
     combo_msg = call_gemini_combos(
@@ -1152,17 +1126,10 @@ def main() -> None:
     if 0 <= hour < 5:
         run_overseas_soccer(now_kst, date_str, chat_id, is_weekend=False)
     elif 6 <= hour < 11:
-        run_nba_nhl(now_kst, date_str, chat_id)
-    elif 12 <= hour < 15:
-        if is_weekend:
-            run_domestic(now_kst, date_str, chat_id)
-    elif 16 <= hour < 19:
-        run_domestic(now_kst, date_str, chat_id)
+        run_nba_only(now_kst, date_str, chat_id)
     elif 19 <= hour <= 23:
         if is_weekend:
             run_overseas_soccer(now_kst, date_str, chat_id, is_weekend=True)
-        else:
-            run_domestic(now_kst, date_str, chat_id)
 
 
 if __name__ == "__main__":
