@@ -385,6 +385,22 @@ def fetch_clubelo_and_dixon_coles(now_kst: datetime.datetime, matchups: list) ->
         return ""
 
 
+def _american_to_prob_and_dec(am_str) -> tuple[float, float]:
+    try:
+        v = float(str(am_str).replace("+", "").strip())
+        if v == 0:
+            return 0.0, 0.0
+        if v < 0:
+            prob = (-v) / (-v + 100.0)
+            dec = 1.0 + (100.0 / (-v))
+        else:
+            prob = 100.0 / (v + 100.0)
+            dec = 1.0 + (v / 100.0)
+        return round(prob * 100.0, 1), round(dec, 2)
+    except Exception:
+        return 0.0, 0.0
+
+
 def fetch_sportsgameodds(league_ids: str, start_kst: datetime.datetime, end_kst: datetime.datetime) -> str:
     if not SPORTSGAMEODDS_KEY:
         return ""
@@ -423,11 +439,29 @@ def fetch_sportsgameodds(league_ids: str, start_kst: datetime.datetime, end_kst:
                     continue
                 pinn = (o.get("byBookmaker") or {}).get("pinnacle")
                 src = pinn if isinstance(pinn, dict) else o
-                val = src.get("odds") or src.get("bookOdds") or src.get("fairOdds") or ""
-                line = src.get("spread") or src.get("overUnder") or o.get("bookSpread") or o.get("bookOverUnder") or ""
-                tag = "피나클" if pinn else "시장컨센서스"
-                if val or line:
-                    parts.append(f"{label}({tag}:{line} {val})".strip())
+                cur_am = src.get("odds") or o.get("bookOdds") or ""
+                open_am = src.get("openOdds") or o.get("openBookOdds") or ""
+                fair_am = o.get("fairOdds") or ""
+                cur_line = src.get("spread") or src.get("overUnder") or o.get("bookSpread") or o.get("bookOverUnder") or ""
+                open_line = src.get("openSpread") or src.get("openOverUnder") or o.get("openBookSpread") or o.get("openBookOverUnder") or ""
+
+                fair_prob, fair_dec = _american_to_prob_and_dec(fair_am)
+                cur_prob, cur_dec = _american_to_prob_and_dec(cur_am)
+                open_prob, open_dec = _american_to_prob_and_dec(open_am)
+
+                move_tag = ""
+                if cur_dec and open_dec and (open_dec - cur_dec) >= 0.05:
+                    move_tag = f" 🔥샤프배당하락({open_dec}->{cur_dec})"
+                elif cur_line and open_line and str(cur_line) != str(open_line):
+                    move_tag = f" 📊라인이동({open_line}->{cur_line})"
+
+                tag = "피나클" if pinn else "시장"
+                if cur_dec or fair_prob or cur_line:
+                    info = f"{label}({tag} {cur_line} {cur_dec if cur_dec else cur_am}".strip()
+                    if fair_prob:
+                        info += f" | 공정승률 {fair_prob}%/공정배당 {fair_dec}"
+                    info += f"){move_tag}"
+                    parts.append(info)
             if parts:
                 lines.append(f"- [{starts_at}] {h_name}(홈) vs {a_name}(원정) | " + ", ".join(parts))
         return "\n".join(lines)
@@ -730,6 +764,7 @@ def call_gemini_matches(title: str, guide: str, data_block: str) -> str:
 4) [핵심 베팅 전략 - 적중률 극대화 & ⚪ 관망(패스) 필터링]
 - 전 경기를 분석하되, 경기 수에 따라 유연하게 선별하세요: 5경기 이상 많을 때는 50:50 애매한 경기(약 30~40%)를 과감히 [⚪ 관망(패스)] 처리하고 진짜 근거가 확실한 상위 ⭐ S급 주력 / A급 추천 경기만 픽을 내세요. 반면 3~4경기 이하로 경기 수가 적을 때는 억지로 관망을 채우지 말고, 각 경기에서 가장 적중 확률이 높은 라인(1.31배 이상 일반승·언더·적정 핸디)을 찾아 ⭐ S급 / A급 추천픽을 제시하세요.
 - [최소 배당 1.31배 & 유형 균형] 1.30배 이하 극저배당 일반승은 금지하며, 선별된 추천 경기 안에서 [1.31배 이상 일반승], [안전 핸디캡], [근거 확실한 언오버]를 자연스럽게 균형 배분하세요.
+- [🔥 샤프 자금(오즈 무브) & 피나클 공정 승률(+EV) 최우선 원칙]: 피나클 배당이 오프닝 대비 하락(🔥샤프배당하락)하거나, 피나클 무수수료 공정승률(fairOdds)이 높으면서 프로토 배당이 1.31배 이상으로 유리하게 책정된 경기를 최우선 ⭐ S급 주력으로 올리세요. 피나클 샤프 자금 흐름과 정반대 방향의 억지 역배/마핸은 절대 금지합니다.
 - [실전 낙첨 패턴 원천 차단 수칙]:
   * NBA 금지 함정: ① 상위 강팀을 상대로 약팀에 [+10.5 이상 대량 플핸] 억지 추천 금지(대패 위험). ② [원정팀 -7.5 이상 대량 마핸] 금지. 대신 부상·수비 페이스 근거가 뚜렷한 언오버(특히 언더), 1.31배 이상 확실한 일반승, 홈 적정 마핸(-3.5~-7.5)을 최우선으로 삼으세요.
   * NHL 금지 함정: ① [NHL -1.5 마핸]은 이기고도 1골 차로 낙첨되는 경우가 매우 잦으므로 원칙적 금지! 승리가 유력하면 1.31배 이상 [일반승]을 고르세요. ② 기준점 6.5에서는 무리한 오버보다 수비/골리 근거 기반 [6.5 언더]를 우선 검토하세요. ③ 원정 약팀 +1.5 플핸은 막판 엠프티넷(빈 골대) 2골 차 패배 위험이 크므로 확실한 접전 근거가 없으면 관망 처리하세요.
