@@ -603,6 +603,75 @@ def fetch_upcoming_espn_events(
     return found
 
 
+def fetch_espn_match_details(sport: str, league: str, events: list) -> str:
+    blocks = []
+    for ev in events[:10]:
+        ev_id = ev.get("id", "")
+        if not ev_id:
+            continue
+        url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/summary?event={ev_id}"
+        try:
+            r = requests.get(url, timeout=12)
+            if not r.ok:
+                continue
+            data = r.json()
+            parts = []
+
+            # Recent 5-game form (soccer & basketball)
+            box_teams = data.get("rosters") or []
+            for rb in box_teams:
+                t_name = (rb.get("team") or {}).get("displayName", "")
+                starters = [
+                    (pl.get("athlete") or {}).get("displayName", "")
+                    for pl in (rb.get("roster") or [])
+                    if pl.get("starter")
+                ]
+                if t_name and starters:
+                    parts.append(f"확정선발({t_name}): " + ", ".join(starters[:11]))
+
+            # Team form / recent games
+            for tf in (data.get("boxscore") or {}).get("form", []):
+                t_name = (tf.get("team") or {}).get("displayName", "")
+                ev_res = [
+                    f"{g.get('gameResult', '')}({g.get('score', '')})"
+                    for g in (tf.get("events") or [])[:5]
+                ]
+                if t_name and ev_res:
+                    parts.append(f"최근5경기({t_name}): " + ", ".join(ev_res))
+
+            # Head-to-Head (H2H)
+            h2h_list = []
+            for h_grp in data.get("headToHeadGames") or []:
+                for g in (h_grp.get("events") or [])[:3]:
+                    sc = g.get("score", "")
+                    opp = (g.get("opponent") or {}).get("displayName", "")
+                    res = g.get("gameResult", "")
+                    dt = (g.get("gameDate") or "")[:10]
+                    if sc:
+                        h2h_list.append(f"{dt} vs {opp} {res}({sc})")
+            if h2h_list:
+                parts.append("최근 맞대결(H2H): " + " / ".join(h2h_list[:4]))
+
+            # Injury list inside summary (if present)
+            inj_list = []
+            for inj_grp in data.get("injuries") or []:
+                t_name = (inj_grp.get("team") or {}).get("displayName", "")
+                p_names = [
+                    f"{(i.get('athlete') or {}).get('displayName', '')}({i.get('status', '')})"
+                    for i in (inj_grp.get("injuries") or [])[:5]
+                ]
+                if t_name and p_names:
+                    inj_list.append(f"{t_name}: " + ", ".join(p_names))
+            if inj_list:
+                parts.append("경기별 부상자: " + " | ".join(inj_list))
+
+            if parts:
+                blocks.append(f"[{ev['home']} vs {ev['away']}]\n  " + "\n  ".join(parts))
+        except Exception:
+            continue
+    return "\n".join(blocks)
+
+
 def fetch_en_news_rss(query: str, max_items: int = 8) -> str:
     q = urllib.parse.quote(query)
     url = f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
@@ -780,11 +849,12 @@ def call_gemini_matches(title: str, guide: str, data_block: str) -> str:
 • 기준: 프로토 1.31배 이상 적중률 최우선, 애매한 경기는 ⚪ 관망(패스) 처리
 
 [종목 | 한국시간] 홈팀(홈) vs 원정팀(원정)
-• 라인/배당: 베트맨 프로토 배당 최우선 표기 (미발매 시 피나클 환산치) + 피나클/프로토 배당 흐름
-• 핵심 지표: 시즌·홈/원정 성적, 최근 10경기, 득실차 (NHL은 PP%/PK%·슈팅, 해축은 ClubElo·Dixon-Coles 확률 포함)
-• 매치업 & 변수: 최신 공식 부상자·선발 골리, 백투백·휴식일 차이 등 핵심 변수
-• 상세 분석글: 전술 상성, 경기 흐름, 왜 이 픽이 가장 적중 확률과 밸류가 높은지 3~4문장으로 충실히 서술
-🌿 최종 추천픽: [⭐ S급 주력] 또는 [A급 추천] + 픽 내용 + 배지(🟢/🟡/🟣)
+• 라인/배당: 베트맨 프로토 배당(1.31배 이상) 최우선 표기 + 피나클 오프닝→현재 배당 흐름(🔥샤프배당하락) 및 무수수료 공정승률(%)
+• 핵심 수치 & 모델: 시즌·홈/원정 성적, 최근 5~10경기 폼, 득실차, 상대전적(H2H), 종목별 고급 지표(NHL PP%/PK%·슈팅 / 해축 ClubElo·Dixon-Coles 승·무·패 및 오버2.5 확률)
+• 선발·부상 & 일정 변수: 경기 1시간 전 확정 선발 라인업·공식 부상자(Out/Questionable)·선발 골리, 백투백(B2B)·휴식일 차이
+• 전술 상성 & 경기 시나리오: 양 팀 공수 템포, 득점 루트, 예상 경기 흐름과 승부처를 3~4문장으로 깊이 있게 서술
+• 리스크 체크 & 밸류 근거: 가장 주의해야 할 반전 변수 1가지 + 그럼에도 왜 이 픽이 시장 배당 대비 적중 확률과 기대값(+EV)이 가장 높은지 핵심 정리
+🌿 최종 추천픽: [⭐ S급 주력] 또는 [A급 추천] + 픽 내용 + (신뢰도 OO%) + 배지(🟢/🟡/🟣)
 
 6) 주의: 이 메시지 안에 조합은 넣지 마세요 (2경기 이상 추천픽이 나오면 마지막에 별도 조합 메시지로 발송합니다).
 """
@@ -924,6 +994,7 @@ def process_upcoming_nba(now_kst: datetime.datetime, win_start: datetime.datetim
     inj = fetch_espn_nba_injuries(teams)
     b2b = fetch_fatigue_b2b("basketball", "nba", now_kst, teams)
     standings = fetch_espn_standings("basketball", "nba")
+    match_details = fetch_espn_match_details("basketball", "nba", events)
 
     data_block = "[경기 시작 약 1시간 전 NBA 대상 경기]\n" + "\n".join(e["line"] for e in events)
     if wisetoto:
@@ -936,6 +1007,8 @@ def process_upcoming_nba(now_kst: datetime.datetime, win_start: datetime.datetim
         data_block += f"\n\n[NBA 팀별 백투백(B2B) 및 휴식일 피로도]\n{b2b}"
     if standings:
         data_block += f"\n\n[NBA 팀별 시즌·홈/원정·최근10·득실차 지표]\n{standings}"
+    if match_details:
+        data_block += f"\n\n[경기별 최근 폼·상대전적(H2H)·부상 세부 리포트]\n{match_details}"
 
     title = f"⏰🏀 [{date_str} {kickoff_str} 경기] 1시간 전 최종 NBA 분석"
     res = call_gemini_matches(
@@ -1056,6 +1129,14 @@ def process_upcoming_soccer(now_kst: datetime.datetime, win_start: datetime.date
         win_end + datetime.timedelta(minutes=30),
     )
     dc_text = fetch_clubelo_and_dixon_coles(now_kst, matchups)
+    soc_details_list = []
+    for sp, lg, label in SOCCER_LEAGUES:
+        lg_evs = [e for e in events if e["label"] == label]
+        if lg_evs:
+            det = fetch_espn_match_details(sp, lg, lg_evs)
+            if det:
+                soc_details_list.append(det)
+    soc_details = "\n".join(soc_details_list)
 
     data_block = "[경기 시작 약 1시간 전 해외축구 대상 경기]\n" + "\n".join(e["line"] for e in events)
     if wisetoto:
@@ -1064,6 +1145,8 @@ def process_upcoming_soccer(now_kst: datetime.datetime, win_start: datetime.date
         data_block += f"\n\n[SportsGameOdds 피나클/해외 배당 & 샤프 배당 하락 흐름]\n{sgo}"
     if dc_text:
         data_block += f"\n\n[ClubElo 전력 점수 & Dixon-Coles 통계 모델 확률/기대득점]\n{dc_text}"
+    if soc_details:
+        data_block += f"\n\n[경기 1시간 전 확정 선발 라인업·최근 5경기 폼·상대전적(H2H)]\n{soc_details}"
 
     title = f"⏰⚽ [{date_str} {kickoff_str} 경기] 1시간 전 최종 해외축구 분석"
     res = call_gemini_matches(
