@@ -2,14 +2,7 @@ name: Hyunduk Sports Scheduled Telegram Bot
 
 on:
   schedule:
-    - cron: '2 16 * * 1-5'
-    - cron: '2 22 * * *'
-    - cron: '2 8 * * 1-5'
-    - cron: '2 4 * * 0,6'
-    - cron: '2 11 * * 0,6'
-    - cron: '30 23 * * *'
-    - cron: '30 6 * * *'
-    - cron: '0 13 * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -27,12 +20,10 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies and Korean fonts
-        run: |
-          sudo apt-get update && sudo apt-get install -y fonts-nanum
-          pip install requests google-genai matplotlib
+      - name: Install dependencies
+        run: pip install requests google-genai
 
-      - name: Run Scheduled Sports Analyzer & Send to Telegram
+      - name: Run 1-Hour-Before-Kickoff Sports Analyzer & Grader
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
