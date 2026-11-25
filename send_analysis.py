@@ -672,6 +672,95 @@ def fetch_espn_match_details(sport: str, league: str, events: list) -> str:
     return "\n".join(blocks)
 
 
+def fetch_understat_xg(league_codes: set, playing_teams: set) -> str:
+    # Map ESPN league codes to Understat league slugs
+    slug_map = {
+        "EPL": "EPL",
+        "라리가": "La_liga",
+        "분데스리가": "Bundesliga",
+        "세리에A": "Serie_A",
+        "리그1": "Ligue_1",
+    }
+    now_kst = datetime.datetime.now(KST)
+    season = str(now_kst.year if now_kst.month >= 8 else now_kst.year - 1)
+    out = []
+    for label in sorted(league_codes):
+        slug = slug_map.get(label)
+        if not slug:
+            continue
+        url = f"https://understat.com/league/{slug}/{season}"
+        try:
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+            if not r.ok:
+                continue
+            m = re.search(r"teamsData\s*=\s*JSON\.parse\('([^']+)'\)", r.text)
+            if not m:
+                continue
+            raw_json = m.group(1).encode("utf-8").decode("unicode_escape")
+            teams_data = json.loads(raw_json)
+            for td in teams_data.values():
+                title = td.get("title", "")
+                if playing_teams and not any(
+                    pt.lower() in title.lower() or title.lower() in pt.lower()
+                    for pt in playing_teams
+                ):
+                    continue
+                hist = td.get("history") or []
+                if not hist:
+                    continue
+                recent = hist[-5:]
+                n = len(recent)
+                xg = sum(float(x.get("xG", 0)) for x in recent) / n
+                xga = sum(float(x.get("xGA", 0)) for x in recent) / n
+                scored = sum(float(x.get("scored", 0)) for x in recent) / n
+                missed = sum(float(x.get("missed", 0)) for x in recent) / n
+                diff_xg = round(scored - xg, 2)
+                tag = "득점거품주의" if diff_xg >= 0.45 else ("득점저평가·반등기대" if diff_xg <= -0.45 else "정상흐름")
+                out.append(
+                    f"- [{label}] {title}: 최근{n}경기 평균 xG {xg:.2f} / xGA {xga:.2f} | 실제득실 {scored:.2f}:{missed:.2f} ({tag})"
+                )
+        except Exception:
+            continue
+    return "\n".join(out)
+
+
+def fetch_rotowire_nba_injuries(playing_teams: set) -> str:
+    url = "https://www.rotowire.com/basketball/tables/injury-report.php?team=ALL&pos=ALL"
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        if not r.ok:
+            return ""
+        rows = r.json()
+        if not isinstance(rows, list):
+            return ""
+        grouped = {}
+        for row in rows:
+            team = str(row.get("team", "")).strip()
+            player = str(row.get("player", "")).strip()
+            status = str(row.get("status", "")).strip()
+            injury = str(row.get("injury", "")).strip()
+            if not team or not player:
+                continue
+            grouped.setdefault(team, []).append(f"{player}({status}, {injury})")
+        lines = []
+        for t, plist in grouped.items():
+            lines.append(f"- {t}: " + ", ".join(plist[:5]))
+        return "\n".join(lines[:30])
+    except Exception:
+        return ""
+
+
+def fetch_nba_referees() -> str:
+    try:
+        txt = fetch_via_jina("https://official.nba.com/referee-assignments/", max_chars=4000)
+        if not txt:
+            return ""
+        lines = [ln.strip() for ln in txt.splitlines() if "@" in ln or "Referee" in ln or "Crew" in ln]
+        return "\n".join(lines[:18])
+    except Exception:
+        return ""
+
+
 def fetch_en_news_rss(query: str, max_items: int = 8) -> str:
     q = urllib.parse.quote(query)
     url = f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
@@ -839,7 +928,7 @@ def call_gemini_matches(title: str, guide: str, data_block: str) -> str:
 - [피나클 샤프 자금 & 공정승률 최우선]: 피나클 무수수료 공정승률(fairOdds) 60% 이상이면서 오프닝 대비 배당이 하락(🔥샤프배당하락)하고, 프로토 배당이 1.31배 이상인 경기를 최우선 ⭐ S급 주력으로 선정하세요. 샤프 흐름에 역행하는 억지 역배는 금지합니다.
 - [NBA 수칙]: 백투백(B2B) 팀 상대 휴식 우위 팀은 [1.31배 이상 일반승] 최우선! NBA 컵 기간 약팀 대량 플핸(+9.5 이상) 금지, 원정 -7.5 이상 대량 마핸 금지. 경기 1시간 전 공식 부상자 명단과 수비/페이스 기반 언더 적극 활용.
 - [NHL 수칙]: 이기고도 틀리는 [-1.5 마핸] 원칙적 금지! 피나클 샤프 배당 하락 + 공정승률 우위 팀의 [1.31배 이상 일반승], 기준점 6.5에서는 무리한 오버보다 [6.5 언더] 우선 검토, 경기 1시간 전 선발 골리·PP%/PK% 근거 반영.
-- [해외축구 수칙]: Dixon-Coles 무승부 확률 26% 이상 접전 경기는 [일반승 금지](관망·언오버 2.5·+1.0 핸디승으로 전환). 일반승은 피나클 공정승률 60%+ & ClubElo 130점 이상 격차 & 프로토 1.31배 이상일 때만 선택.
+- [해외축구 수칙]: 1골 실점으로 무너지기 쉬운 [-1.0 이상 마핸]은 가급적 피하고, [1.31배 이상 일반승], [언오버(Understat xG/xGA 반영)], [+1.0 플핸] 위주로 공략하세요. Dixon-Coles 무승부 확률 26% 이상 접전 경기는 [일반승 금지](언오버·+1.0 플핸·패스). 일반승은 피나클 공정승률 60%+ & ClubElo 130점 이상 격차 & 프로토 1.31배 이상일 때만 선택.
 - [국내/아시아 수칙]: 와이즈토토 프로토 배당 하락(↓) 방향 + 주포 결장·휴식일 차이를 우선 반영하고, 없는 경기는 절대 지어내지 마세요.
 - 픽 유형 배지: 일반승/마핸은 🟢, 언오버는 🟡, 역배/플핸은 🟣, 패스는 ⚪ 관망(패스).
 5) 반드시 맨 위에 [📌 분석 방식]을 2줄로 먼저 밝힌 뒤, 각 경기마다 아래 양식대로 깊이 있는 분석글을 작성하세요:
@@ -995,6 +1084,8 @@ def process_upcoming_nba(now_kst: datetime.datetime, win_start: datetime.datetim
     b2b = fetch_fatigue_b2b("basketball", "nba", now_kst, teams)
     standings = fetch_espn_standings("basketball", "nba")
     match_details = fetch_espn_match_details("basketball", "nba", events)
+    roto_inj = fetch_rotowire_nba_injuries(teams)
+    nba_refs = fetch_nba_referees()
 
     data_block = "[경기 시작 약 1시간 전 NBA 대상 경기]\n" + "\n".join(e["line"] for e in events)
     if wisetoto:
@@ -1009,6 +1100,10 @@ def process_upcoming_nba(now_kst: datetime.datetime, win_start: datetime.datetim
         data_block += f"\n\n[NBA 팀별 시즌·홈/원정·최근10·득실차 지표]\n{standings}"
     if match_details:
         data_block += f"\n\n[경기별 최근 폼·상대전적(H2H)·부상 세부 리포트]\n{match_details}"
+    if roto_inj:
+        data_block += f"\n\n[RotoWire 실시간 NBA 부상/결장 교차 검증]\n{roto_inj}"
+    if nba_refs:
+        data_block += f"\n\n[NBA 오늘의 공식 심판 배정 (언오버·파울 성향 참고)]\n{nba_refs}"
 
     title = f"⏰🏀 [{date_str} {kickoff_str} 경기] 1시간 전 최종 NBA 분석"
     res = call_gemini_matches(
@@ -1145,6 +1240,11 @@ def process_upcoming_soccer(now_kst: datetime.datetime, win_start: datetime.date
         data_block += f"\n\n[SportsGameOdds 피나클/해외 배당 & 샤프 배당 하락 흐름]\n{sgo}"
     if dc_text:
         data_block += f"\n\n[ClubElo 전력 점수 & Dixon-Coles 통계 모델 확률/기대득점]\n{dc_text}"
+    league_labels = {e["label"] for e in events}
+    soc_teams = {e["home"] for e in events} | {e["away"] for e in events}
+    xg_text = fetch_understat_xg(league_labels, soc_teams)
+    if xg_text:
+        data_block += f"\n\n[Understat 유럽 5대 리그 실제 기대득점(xG/xGA) & 거품/저평가 지표]\n{xg_text}"
     if soc_details:
         data_block += f"\n\n[경기 1시간 전 확정 선발 라인업·최근 5경기 폼·상대전적(H2H)]\n{soc_details}"
 
