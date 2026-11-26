@@ -216,7 +216,7 @@ def fetch_sportsgameodds(league_ids: str, start_kst: datetime.datetime, end_kst:
         "oddsAvailable": "true",
         "startsAfter": start_kst.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "startsBefore": end_kst.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "limit": 30,
+        "limit": 50,
     }
     try:
         r = requests.get(url, headers={"x-api-key": SPORTSGAMEODDS_KEY}, params=params, timeout=15)
@@ -369,7 +369,7 @@ def fetch_fatigue_b2b(sport: str, league: str, now_kst: datetime.datetime, playi
         d_str = (now_kst - datetime.timedelta(days=days_ago)).strftime("%Y%m%d")
         url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/scoreboard?dates={d_str}"
         try:
-            r = requests.get(url, timeout=12)
+            r = requests.get(url, timeout=8)
             if not r.ok:
                 continue
             for ev in r.json().get("events", []):
@@ -605,7 +605,7 @@ def fetch_upcoming_espn_events(
 
 def fetch_espn_match_details(sport: str, league: str, events: list) -> str:
     blocks = []
-    for ev in events[:10]:
+    for ev in events[:25]:
         ev_id = ev.get("id", "")
         if not ev_id:
             continue
@@ -683,8 +683,11 @@ def fetch_understat_xg(league_codes: set, playing_teams: set) -> str:
     }
     now_kst = datetime.datetime.now(KST)
     season = str(now_kst.year if now_kst.month >= 8 else now_kst.year - 1)
+    target_labels = set(league_codes)
+    if target_labels & {"챔피언스리그", "유로파리그", "컨퍼런스리그"}:
+        target_labels.update(slug_map.keys())
     out = []
-    for label in sorted(league_codes):
+    for label in sorted(target_labels):
         slug = slug_map.get(label)
         if not slug:
             continue
@@ -962,7 +965,7 @@ def call_gemini_matches(title: str, guide: str, data_block: str) -> str:
 - [피나클 샤프 자금 & 공정승률 최우선]: 피나클 무수수료 공정승률(fairOdds) 60% 이상이면서 오프닝 대비 배당이 하락(🔥샤프배당하락)하고, 프로토 배당이 1.31배 이상인 경기를 최우선 ⭐ S급 주력으로 선정하세요. 샤프 흐름에 역행하는 억지 역배는 금지합니다.
 - [NBA 수칙]: 백투백(B2B) 팀 상대 휴식 우위 팀은 [1.31배 이상 일반승] 최우선! NBA 컵 기간 약팀 대량 플핸(+9.5 이상) 금지, 원정 -7.5 이상 대량 마핸 금지. 경기 1시간 전 공식 부상자 명단과 수비/페이스 기반 언더 적극 활용.
 - [NHL 수칙]: 이기고도 틀리는 [-1.5 마핸] 원칙적 금지! 피나클 샤프 배당 하락 + 공정승률 우위 팀의 [1.31배 이상 일반승], 기준점 6.5에서는 무리한 오버보다 [6.5 언더] 우선 검토, 경기 1시간 전 선발 골리·PP%/PK% 근거 반영.
-- [해외축구 수칙]: 1골 실점으로 무너지기 쉬운 [-1.0 이상 마핸]은 가급적 피하고, [1.31배 이상 일반승], [언오버(Understat xG/xGA 반영)], [+1.0 플핸] 위주로 공략하세요. Dixon-Coles 무승부 확률 26% 이상 접전 경기는 [일반승 금지](언오버·+1.0 플핸·패스). 일반승은 피나클 공정승률 60%+ & ClubElo 130점 이상 격차 & 프로토 1.31배 이상일 때만 선택.
+- [해외축구·유로파·컨퍼런스 수칙]: 1골 실점으로 무너지기 쉬운 [-1.0 이상 마핸]은 가급적 피하고, [1.31배 이상 일반승], [언오버(Understat xG/xGA 반영)], [+1.0 플핸] 위주로 공략하세요. 특히 유로파리그·컨퍼런스리그는 경기 1시간 전 [확정선발]에서 빅클럽의 주말 리그 대비 주전 로테이션(후보 대거 투입) 여부와 동유럽·북유럽 장거리 원정 변수를 최우선 점검하고, 로테이션·장거리 원정 경기는 강팀 일반승/마핸을 피하고 언오버·+1.0 플핸으로 공략하세요. Dixon-Coles 무승부 확률 26% 이상 접전 경기는 [일반승 금지](언오버·+1.0 플핸·패스). 일반승은 피나클 공정승률 60%+ & ClubElo 130점 이상 격차 & 프로토 1.31배 이상일 때만 선택.
 - [국내/아시아 수칙]: 와이즈토토 프로토 배당 하락(↓) 방향 + 주포 결장·휴식일 차이를 우선 반영하고, 없는 경기는 절대 지어내지 마세요.
 - 픽 유형 배지: 일반승/마핸은 🟢, 언오버는 🟡, 역배/플핸은 🟣, 패스는 ⚪ 관망(패스).
 5) 반드시 맨 위에 [📌 분석 방식]을 2줄로 먼저 밝힌 뒤, 각 경기마다 아래 양식대로 깊이 있는 분석글을 작성하세요:
@@ -1241,77 +1244,110 @@ def process_upcoming_soccer(now_kst: datetime.datetime, win_start: datetime.date
     history = load_history()
     sent_ids = get_sent_event_ids(history)
     events = []
+    league_lookup = {}
     for sp, lg, label in SOCCER_LEAGUES:
-        events.extend(fetch_upcoming_espn_events(sp, lg, label, win_start, win_end, sent_ids))
+        evs = fetch_upcoming_espn_events(sp, lg, label, win_start, win_end, sent_ids)
+        if evs:
+            events.extend(evs)
+            league_lookup[label] = (sp, lg)
     if not events:
         return
 
-    eids = [e["id"] for e in events]
-    matchups = [(e["home"], e["away"]) for e in events]
     kickoff_str = events[0]["dt_kst"].strftime("%H:%M")
     date_str = now_kst.strftime("%Y-%m-%d")
 
     wisetoto = fetch_wisetoto_by_mmdd(f"{now_kst.month:02d}.{now_kst.day:02d}")
-    sgo = fetch_sportsgameodds(
+    sgo_parts = []
+    sgo_main = fetch_sportsgameodds(
         "EPL,LA_LIGA,IT_SERIE_A,BUNDESLIGA,LIGUE_1,UEFA_CHAMPIONS_LEAGUE,UEFA_EUROPA_LEAGUE",
         win_start - datetime.timedelta(minutes=30),
         win_end + datetime.timedelta(minutes=30),
     )
-    dc_text = fetch_clubelo_and_dixon_coles(now_kst, matchups)
-    soc_details_list = []
-    for sp, lg, label in SOCCER_LEAGUES:
-        lg_evs = [e for e in events if e["label"] == label]
-        if lg_evs:
-            det = fetch_espn_match_details(sp, lg, lg_evs)
-            if det:
-                soc_details_list.append(det)
-    soc_details = "\n".join(soc_details_list)
+    if sgo_main:
+        sgo_parts.append(sgo_main)
+    if any(e["label"] == "컨퍼런스리그" for e in events):
+        sgo_conf = fetch_sportsgameodds(
+            "UEFA_EUROPA_CONFERENCE_LEAGUE",
+            win_start - datetime.timedelta(minutes=30),
+            win_end + datetime.timedelta(minutes=30),
+        )
+        if sgo_conf:
+            sgo_parts.append(sgo_conf)
+    sgo = "\n".join(sgo_parts)
 
-    data_block = "[경기 시작 약 1시간 전 해외축구 대상 경기]\n" + "\n".join(e["line"] for e in events)
-    if wisetoto:
-        data_block += f"\n\n[베트맨 프로토 승부식 공식 배당표 - 최우선 기준]\n{wisetoto}"
-    if sgo:
-        data_block += f"\n\n[SportsGameOdds 피나클/해외 배당 & 샤프 배당 하락 흐름]\n{sgo}"
-    if dc_text:
-        data_block += f"\n\n[ClubElo 전력 점수 & Dixon-Coles 통계 모델 확률/기대득점]\n{dc_text}"
-    league_labels = {e["label"] for e in events}
-    soc_teams = {e["home"] for e in events} | {e["away"] for e in events}
-    xg_text = fetch_understat_xg(league_labels, soc_teams)
-    if xg_text:
-        data_block += f"\n\n[Understat 유럽 5대 리그 실제 기대득점(xG/xGA) & 거품/저평가 지표]\n{xg_text}"
-    if soc_details:
-        data_block += f"\n\n[경기 1시간 전 확정 선발 라인업·최근 5경기 폼·상대전적(H2H)]\n{soc_details}"
+    # 유로파·컨퍼런스 등 동시 15~20경기 대형 매치데이 누락/출력 잘림 방지:
+    # 리그별 분리 + 최대 5경기씩 분할 분석 후 마지막에 통합 최정예 조합 발송
+    grouped_by_league = {}
+    for ev in events:
+        grouped_by_league.setdefault(ev["label"], []).append(ev)
 
-    title = f"⏰⚽ [{date_str} {kickoff_str} 경기] 1시간 전 최종 해외축구 분석"
-    res = call_gemini_matches(
-        title,
-        "경기 시작 1시간 전 최종 피나클 샤프 배당 하락/공정승률, 베트맨 프로토 배당, ClubElo·Dixon-Coles 확률을 종합해 무승부 함정을 피하고 적중률 최우선으로 분석하세요.",
-        data_block,
-    )
-    send_telegram_message(res, chat_id, use_html=True)
+    all_picks_blocks = []
+    all_eids = []
+    chunk_size = 5
 
-    picks_sum = extract_picks_summary(res)
+    for label, lg_evs in grouped_by_league.items():
+        sp, lg = league_lookup[label]
+        total_chunks = (len(lg_evs) + chunk_size - 1) // chunk_size
+
+        for idx in range(total_chunks):
+            chunk_evs = lg_evs[idx * chunk_size : (idx + 1) * chunk_size]
+            chunk_eids = [e["id"] for e in chunk_evs]
+            all_eids.extend(chunk_eids)
+            matchups = [(e["home"], e["away"]) for e in chunk_evs]
+            soc_teams = {e["home"] for e in chunk_evs} | {e["away"] for e in chunk_evs}
+
+            dc_text = fetch_clubelo_and_dixon_coles(now_kst, matchups)
+            xg_text = fetch_understat_xg({label}, soc_teams)
+            soc_details = fetch_espn_match_details(sp, lg, chunk_evs)
+
+            data_block = f"[경기 시작 약 1시간 전 {label} 대상 경기 ({idx + 1}/{total_chunks})]\n" + "\n".join(e["line"] for e in chunk_evs)
+            if wisetoto:
+                data_block += f"\n\n[베트맨 프로토 승부식 공식 배당표 - 최우선 기준]\n{wisetoto}"
+            if sgo:
+                data_block += f"\n\n[SportsGameOdds 피나클/해외 배당 & 샤프 배당 하락 흐름]\n{sgo}"
+            if dc_text:
+                data_block += f"\n\n[ClubElo 전력 점수 & Dixon-Coles 통계 모델 확률/기대득점]\n{dc_text}"
+            if xg_text:
+                data_block += f"\n\n[Understat 유럽 5대 리그 실제 기대득점(xG/xGA) & 거품/저평가 지표]\n{xg_text}"
+            if soc_details:
+                data_block += f"\n\n[경기 1시간 전 확정 선발 라인업·최근 5경기 폼·상대전적(H2H)]\n{soc_details}"
+
+            part_tag = f" ({idx + 1}/{total_chunks}부)" if total_chunks > 1 else ""
+            title = f"⏰⚽ [{date_str} {kickoff_str} {label}{part_tag}] 1시간 전 정밀 분석"
+            res = call_gemini_matches(
+                title,
+                f"경기 시작 1시간 전 {label} 확정 선발 라인업(주전 로테이션 여부 최우선), 피나클 샤프 배당 하락/공정승률, 베트맨 프로토 배당, ClubElo·Dixon-Coles·Understat xG 지표를 모두 종합해 한 경기도 대충 넘기지 말고 정밀 분석하세요. (-1.0 이상 마핸 가급적 회피, 1.31배 이상 일반승·언오버·+1.0 플핸 우선!)",
+                data_block,
+            )
+            send_telegram_message(res, chat_id, use_html=True)
+
+            picks_sum = extract_picks_summary(res)
+            if picks_sum:
+                all_picks_blocks.append(picks_sum)
+            time.sleep(3)
+
+    combined_picks = "\n\n".join(all_picks_blocks)
     history = load_history()
     history.append(
         {
             "date": date_str,
             "slot": f"해외축구({kickoff_str})",
-            "status": "pending" if picks_sum else "empty",
-            "event_ids": eids,
-            "picks_text": picks_sum,
+            "status": "pending" if combined_picks else "empty",
+            "event_ids": all_eids,
+            "picks_text": combined_picks,
         }
     )
     save_history(history)
 
-    pick_count = picks_sum.count("최종 추천픽")
+    pick_count = combined_picks.count("최종 추천픽")
     if pick_count >= 2:
         time.sleep(4)
         combo_rules = (
-            "반드시 아래 해외축구 조합을 적중률 최우선(1.31배 이상, 무승부 위험 경기 일반승 제외)으로 구성해 줘:\n"
+            "반드시 아래 해외축구(유로파·컨퍼런스 포함) 통합 조합을 적중률 최우선(1.31배 이상, -1.0 마핸·무승부 위험 일반승 제외)으로 구성해 줘:\n"
             "① 최정예 안정형 주력 2폴더 (가장 확실한 ⭐ S급 2경기)\n"
-            + ("② 일반승 + 핸디캡 + 언오버 3폴더 조합 (각 유형 1경기씩)" if pick_count >= 3 else "")
+            + ("② 일반승 + 플핸/핸디캡 + 언오버 3폴더 밸류 조합" if pick_count >= 3 else "")
         )
-        combo_msg = call_gemini_combos(f"🎯 [{date_str} {kickoff_str}] 해외축구 1시간 전 최종 추천 조합", combo_rules, picks_sum)
+        combo_msg = call_gemini_combos(f"🎯 [{date_str} {kickoff_str}] 해외축구 1시간 전 최종 추천 조합", combo_rules, combined_picks)
         if combo_msg:
             send_telegram_message(combo_msg, chat_id, use_html=True)
 
