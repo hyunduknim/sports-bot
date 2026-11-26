@@ -813,40 +813,74 @@ def fetch_via_jina(target_url: str, max_chars: int = 350000) -> str:
     return ""
 
 
-def _extract_mmdd_lines(raw: str, target_mmdd: str) -> str:
+DOMESTIC_KEYWORDS = (
+    "KBL", "WKBL", "V리그", "KOVO", "남자배구", "여자배구", "K리그", "J리그", "J1", "J2", "ACLE", "ACL",
+    "우리카드", "삼성화재", "현대건설", "한국전력", "현대캐피탈", "대한항공", "KB손해", "OK저축",
+    "도로공사", "흥국생명", "GS칼텍스", "IBK기업", "정관장", "SOOP", "페퍼저축",
+    "원주DB", "서울SK", "부산KCC", "창원LG", "수원KT", "서울삼성", "고양소노", "현대모비스", "가스공사",
+    "KB스타즈", "우리은행", "삼성생명", "신한은행", "하나은행", "BNK", "FIBA", "국대", "대한민국",
+)
+
+
+def _extract_mmdd_lines(raw: str, target_mmdd: str, domestic_only: bool = False) -> list:
     if not raw or target_mmdd not in raw:
-        return ""
+        return []
     lines = raw.splitlines()
     matched = []
     i = 0
     while i < len(lines):
         if target_mmdd in lines[i]:
             block = " | ".join(ln.strip() for ln in lines[i : i + 7] if ln.strip())
-            matched.append(block)
+            if not domestic_only or any(kw in block for kw in DOMESTIC_KEYWORDS):
+                matched.append(block)
             i += 4
         else:
             i += 1
-    return "\n".join(matched[:140]) if matched else ""
+    return matched
 
 
-def fetch_wisetoto_by_mmdd(target_mmdd: str) -> str:
+def fetch_wisetoto_by_mmdd(target_mmdd: str, domestic_only: bool = False) -> str:
     year = datetime.datetime.now(KST).year
+    collected = []
+    seen = set()
+
+    def _add(rows: list) -> None:
+        for row in rows:
+            if row not in seen:
+                seen.add(row)
+                collected.append(row)
+
+    cur_round = None
     for target in ["https://mw.wisetoto.com/", "https://www.wisetoto.com/"]:
         raw = fetch_via_jina(target, max_chars=350000)
-        found = _extract_mmdd_lines(raw, target_mmdd)
-        if found:
-            return found
-        if raw:
+        if not raw:
+            continue
+        _add(_extract_mmdd_lines(raw, target_mmdd, domestic_only=domestic_only))
+        if cur_round is None:
             m = re.search(r"프로토\s*승부식\s*\d{4}년도\s*(\d+)회차", raw)
             if m:
                 cur_round = int(m.group(1))
-                for r_num in (cur_round + 1, cur_round - 1):
-                    alt_url = f"https://mw.wisetoto.com/?tab_type=proto&game_type=pt&game_category=pt1&game_year={year}&game_round={r_num}"
-                    alt_raw = fetch_via_jina(alt_url, max_chars=350000)
-                    alt_found = _extract_mmdd_lines(alt_raw, target_mmdd)
-                    if alt_found:
-                        return alt_found
-    return ""
+        if cur_round is not None:
+            break
+
+    # 회차 경계일(예: 이전 회차에 새벽 해외경기, 다음 회차에 저녁 국내경기가 걸친 날) 누락 방지:
+    # 기본 회차에 매칭이 있어도 반드시 다음 회차(cur_round + 1)까지 병합 수집
+    if cur_round is not None:
+        rounds_to_check = [cur_round + 1]
+        if not collected:
+            rounds_to_check.append(cur_round - 1)
+        for r_num in rounds_to_check:
+            for alt_url in (
+                f"https://www.wisetoto.com/index.htm?tab_type=proto&game_type=pt&game_category=pt1&game_year={year}&game_round={r_num}&pn=m",
+                f"https://mw.wisetoto.com/?tab_type=proto&game_type=pt&game_category=pt1&game_year={year}&game_round={r_num}",
+            ):
+                alt_raw = fetch_via_jina(alt_url, max_chars=350000)
+                alt_rows = _extract_mmdd_lines(alt_raw, target_mmdd, domestic_only=domestic_only)
+                if alt_rows:
+                    _add(alt_rows)
+                    break
+
+    return "\n".join(collected[:250]) if collected else ""
 
 
 def fetch_finished_scores(now_kst: datetime.datetime) -> dict:
@@ -1302,7 +1336,7 @@ def process_domestic_if_due(now_kst: datetime.datetime, chat_id: str) -> None:
         for e in evs:
             asia_lines.append(e["line"])
 
-    wisetoto = fetch_wisetoto_by_mmdd(f"{now_kst.month:02d}.{now_kst.day:02d}")
+    wisetoto = fetch_wisetoto_by_mmdd(f"{now_kst.month:02d}.{now_kst.day:02d}", domestic_only=True)
     kbl_news = fetch_google_news_rss(f"{now_kst.month}월 {now_kst.day}일 프로농구 프로배구 일정", max_items=8)
 
     data_block = (
