@@ -821,7 +821,7 @@ DOMESTIC_KEYWORDS = (
     "우리카드", "삼성화재", "현대건설", "한국전력", "현대캐피탈", "대한항공", "KB손해", "OK저축",
     "도로공사", "흥국생명", "GS칼텍스", "IBK기업", "정관장", "SOOP", "페퍼저축",
     "원주DB", "서울SK", "부산KCC", "창원LG", "수원KT", "서울삼성", "고양소노", "현대모비스", "가스공사",
-    "KB스타즈", "우리은행", "삼성생명", "신한은행", "하나은행", "BNK", "FIBA", "국대", "대한민국",
+    "KB스타즈", "우리은행", "삼성생명", "신한은행", "하나은행", "BNK",
 )
 
 
@@ -1063,6 +1063,20 @@ def grade_finished_batches(now_kst: datetime.datetime, chat_id: str) -> None:
             if not all(eid in completed_map for eid in eids):
                 continue
             batch_scores = "\n".join(completed_map[eid] for eid in eids)
+        elif "남농월예" in slot:
+            if dt >= today_str:
+                m_hh = re.search(r"(\d{2}):(\d{2})", slot)
+                if m_hh:
+                    ko_dt = now_kst.replace(hour=int(m_hh.group(1)), minute=int(m_hh.group(2)), second=0, microsecond=0)
+                    if now_kst < ko_dt + datetime.timedelta(hours=3):
+                        continue
+            if dom_scores_cache is None:
+                yest_kst = now_kst - datetime.timedelta(days=1)
+                wt_y = fetch_wisetoto_by_mmdd(f"{yest_kst.month:02d}.{yest_kst.day:02d}")
+                wt_t = fetch_wisetoto_by_mmdd(f"{now_kst.month:02d}.{now_kst.day:02d}")
+                fiba_res = fetch_google_news_rss("FIBA 남자농구 월드컵 예선 경기 결과", max_items=10)
+                dom_scores_cache = f"[와이즈토토 어제]\n{wt_y}\n\n[와이즈토토 오늘]\n{wt_t}\n\n[FIBA 결과 뉴스]\n{fiba_res}".strip()
+            batch_scores = dom_scores_cache
         elif "국내" in slot:
             if dt >= today_str and now_kst.hour < 21:
                 continue
@@ -1352,6 +1366,97 @@ def process_upcoming_soccer(now_kst: datetime.datetime, win_start: datetime.date
             send_telegram_message(combo_msg, chat_id, use_html=True)
 
 
+def process_upcoming_fiba(now_kst: datetime.datetime, win_start: datetime.datetime, win_end: datetime.datetime, chat_id: str) -> None:
+    mmdds = [f"{win_start.month:02d}.{win_start.day:02d}"]
+    end_mmdd = f"{win_end.month:02d}.{win_end.day:02d}"
+    if end_mmdd not in mmdds:
+        mmdds.append(end_mmdd)
+
+    raw_rows = []
+    for mmdd in mmdds:
+        wt = fetch_wisetoto_by_mmdd(mmdd)
+        if wt:
+            for ln in wt.splitlines():
+                if "남농월예" in ln:
+                    raw_rows.append(ln)
+    if not raw_rows:
+        return
+
+    year = now_kst.year
+    grouped_by_ko = {}
+    for ln in raw_rows:
+        m = re.search(r"(\d{2})\.(\d{2})\([^)]+\)\s*(\d{2}):(\d{2})", ln)
+        if not m:
+            continue
+        mm, dd, hh, mi = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+        try:
+            dt_kst = datetime.datetime(year, mm, dd, hh, mi, tzinfo=KST)
+        except ValueError:
+            continue
+        if win_start <= dt_kst <= win_end:
+            ko_key = dt_kst.strftime("%Y-%m-%d %H:%M")
+            grouped_by_ko.setdefault(ko_key, []).append(ln)
+
+    if not grouped_by_ko:
+        return
+
+    history = load_history()
+    fiba_news_kr = fetch_google_news_rss("FIBA 남자농구 월드컵 예선 로스터 부상", max_items=8)
+    fiba_news_en = fetch_en_news_rss("FIBA Basketball World Cup 2027 Qualifiers preview roster", max_items=8)
+
+    for ko_key in sorted(grouped_by_ko.keys()):
+        ko_date, ko_hhmm = ko_key.split(" ")
+        slot_name = f"남농월예({ko_hhmm})"
+        if already_sent_slot(history, ko_date, slot_name):
+            continue
+
+        ko_lines = grouped_by_ko[ko_key]
+        data_block = (
+            f"[경기 시작 약 1시간 전 FIBA 남자농구 월드컵 예선 대상 경기 ({ko_date} {ko_hhmm} KST)]\n"
+            + "\n".join(ko_lines)
+        )
+        if fiba_news_kr:
+            data_block += f"\n\n[FIBA 남자농구 월드컵 예선 한국 뉴스]\n{fiba_news_kr}"
+        if fiba_news_en:
+            data_block += f"\n\n[FIBA World Cup 2027 Qualifiers 공식·해외 로스터 뉴스]\n{fiba_news_en}"
+
+        title = f"⏰🏀 [{ko_date} {ko_hhmm} 경기] 1시간 전 FIBA 남자농구 월드컵 예선 정밀 분석"
+        guide = (
+            "위 프로토 승부식 공식 배당표(남농월예)에 편성된 실제 경기만 빠짐없이 분석하세요. "
+            "각 경기마다 반드시 [일반승], [핸디캡(마핸/플핸)], [언오버] 3개 유형을 전부 상세히 평가해 주고, "
+            "그중 프로토 1.31배 이상이면서 가장 적중 확률이 높은 1개를 🌿 최종 추천픽으로 선정하세요. "
+            "(1.30배 이하 극저배당 일반승은 추천픽 금지, 핸디캡·언오버 중심 적극 활용!)"
+        )
+        res = call_gemini_matches(title, guide, data_block)
+        send_telegram_message(res, chat_id, use_html=True)
+
+        picks_sum = extract_picks_summary(res)
+        history = load_history()
+        history.append(
+            {
+                "date": ko_date,
+                "slot": slot_name,
+                "status": "pending" if picks_sum else "empty",
+                "event_ids": [],
+                "picks_text": picks_sum,
+            }
+        )
+        save_history(history)
+
+        pick_count = picks_sum.count("최종 추천픽")
+        if pick_count >= 2:
+            time.sleep(4)
+            combo_rules = (
+                "반드시 아래 FIBA 남자농구 월드컵 예선 조합을 적중률 최우선(1.31배 이상)으로 구성해 줘:\n"
+                "① 남농월예 최정예 주력 2폴더 (가장 확실한 ⭐ S급 2경기)\n"
+                + ("② 남농월예 밸류 3폴더 (일반승·핸디캡·언오버 균형 조합)" if pick_count >= 3 else "")
+            )
+            combo_msg = call_gemini_combos(f"🎯 [{ko_date} {ko_hhmm}] FIBA 남농월예 1시간 전 최종 추천 조합", combo_rules, picks_sum)
+            if combo_msg:
+                send_telegram_message(combo_msg, chat_id, use_html=True)
+        time.sleep(2)
+
+
 def process_domestic_if_due(now_kst: datetime.datetime, chat_id: str) -> None:
     is_weekend = now_kst.weekday() >= 5
     hour = now_kst.hour
@@ -1433,6 +1538,7 @@ def main() -> None:
     process_upcoming_nba(now_kst, win_start, win_end, chat_id)
     process_upcoming_nhl(now_kst, win_start, win_end, chat_id)
     process_upcoming_soccer(now_kst, win_start, win_end, chat_id)
+    process_upcoming_fiba(now_kst, win_start, win_end, chat_id)
 
     # 3. Domestic & Asian sports at 17~18 KST (weekdays) / 13~14 KST (weekends)
     process_domestic_if_due(now_kst, chat_id)
