@@ -35,6 +35,8 @@ SOCCER_LEAGUES = [
     ("soccer", "ita.1", "세리에A"),
     ("soccer", "ger.1", "분데스리가"),
     ("soccer", "fra.1", "리그1"),
+    ("soccer", "ned.1", "에레디비시"),
+    ("soccer", "eng.2", "EFL챔피언십"),
     ("soccer", "uefa.champions", "챔피언스리그"),
     ("soccer", "uefa.europa", "유로파리그"),
     ("soccer", "uefa.europa.conf", "컨퍼런스리그"),
@@ -1197,59 +1199,76 @@ def process_upcoming_nhl(now_kst: datetime.datetime, win_start: datetime.datetim
     if not events:
         return
 
-    teams = {e["home"] for e in events} | {e["away"] for e in events}
     eids = [e["id"] for e in events]
     kickoff_str = events[0]["dt_kst"].strftime("%H:%M")
     date_str = now_kst.strftime("%Y-%m-%d")
 
     wisetoto = fetch_wisetoto_by_mmdd(f"{now_kst.month:02d}.{now_kst.day:02d}")
     sgo = fetch_sportsgameodds("NHL", win_start - datetime.timedelta(minutes=30), win_end + datetime.timedelta(minutes=30))
-    nhl_adv = fetch_nhl_official_advanced(teams)
-    b2b = fetch_fatigue_b2b("hockey", "nhl", now_kst, teams)
-    goalie_news = fetch_en_news_rss("NHL confirmed starting goalies today", max_items=8)
+    goalie_news = fetch_en_news_rss("NHL confirmed starting goalies today", max_items=10)
 
-    data_block = "[경기 시작 약 1시간 전 NHL 대상 경기]\n" + "\n".join(e["line"] for e in events)
-    if wisetoto:
-        data_block += f"\n\n[베트맨 프로토 승부식 공식 배당표 - 최우선 기준]\n{wisetoto}"
-    if sgo:
-        data_block += f"\n\n[SportsGameOdds 피나클/해외 배당 & 샤프 배당 하락 흐름]\n{sgo}"
-    if nhl_adv:
-        data_block += f"\n\n[NHL 공식 고급 지표 (홈/원정·득실·PP%/PK%·슈팅)]\n{nhl_adv}"
-    if b2b:
-        data_block += f"\n\n[NHL 팀별 백투백(B2B) 및 휴식일 피로도]\n{b2b}"
-    if goalie_news:
-        data_block += f"\n\n[경기 1시간 전 NHL 선발 골리 확정 뉴스]\n{goalie_news}"
+    chunk_size = 5
+    total_chunks = (len(events) + chunk_size - 1) // chunk_size
+    all_picks_blocks = []
 
-    title = f"⏰🏒 [{date_str} {kickoff_str} 경기] 1시간 전 최종 NHL 분석"
-    res = call_gemini_matches(
-        title,
-        "경기 시작 1시간 전 선발 골리 정보, 피나클 샤프 배당 하락/공정승률, NHL 공식 PP%/PK%·슈팅 지표를 종합해 분석하세요. (-1.5 마핸 원칙적 금지, 1.31배 이상 일반승과 6.5 언더 우선!)",
-        data_block,
-    )
-    send_telegram_message(res, chat_id, use_html=True)
+    for idx in range(total_chunks):
+        chunk_evs = events[idx * chunk_size : (idx + 1) * chunk_size]
+        chunk_teams = {e["home"] for e in chunk_evs} | {e["away"] for e in chunk_evs}
+        nhl_adv = fetch_nhl_official_advanced(chunk_teams)
+        b2b = fetch_fatigue_b2b("hockey", "nhl", now_kst, chunk_teams)
+        nhl_details = fetch_espn_match_details("hockey", "nhl", chunk_evs)
 
-    picks_sum = extract_picks_summary(res)
+        data_block = f"[경기 시작 약 1시간 전 NHL 대상 경기 ({idx + 1}/{total_chunks})]\n" + "\n".join(e["line"] for e in chunk_evs)
+        if wisetoto:
+            data_block += f"\n\n[베트맨 프로토 승부식 공식 배당표 - 최우선 기준]\n{wisetoto}"
+        if sgo:
+            data_block += f"\n\n[SportsGameOdds 피나클/해외 배당 & 샤프 배당 하락 흐름]\n{sgo}"
+        if nhl_adv:
+            data_block += f"\n\n[NHL 공식 고급 지표 (홈/원정·득실·PP%/PK%·슈팅)]\n{nhl_adv}"
+        if b2b:
+            data_block += f"\n\n[NHL 팀별 백투백(B2B) 및 휴식일 피로도]\n{b2b}"
+        if nhl_details:
+            data_block += f"\n\n[NHL 경기별 최근 폼·상대전적(H2H)·부상자 세부 리포트]\n{nhl_details}"
+        if goalie_news:
+            data_block += f"\n\n[경기 1시간 전 NHL 선발 골리 확정 뉴스]\n{goalie_news}"
+
+        part_tag = f" ({idx + 1}/{total_chunks}부)" if total_chunks > 1 else ""
+        title = f"⏰🏒 [{date_str} {kickoff_str} NHL{part_tag}] 1시간 전 정밀 분석"
+        res = call_gemini_matches(
+            title,
+            "경기 시작 1시간 전 선발 골리, 피나클 샤프 배당 하락/공정승률, NHL 공식 PP%/PK%·슈팅, 최근 폼·H2H·백투백(B2B)을 모두 종합해 한 경기도 대충 넘기지 말고 정밀 분석하세요. (-1.5 마핸 원칙적 금지, 1.31배 이상 일반승·+1.5 플핸·언오버(특히 6.5 언더) 우선!)",
+            data_block,
+        )
+        send_telegram_message(res, chat_id, use_html=True)
+
+        picks_sum = extract_picks_summary(res)
+        if picks_sum:
+            all_picks_blocks.append(picks_sum)
+        if idx + 1 < total_chunks:
+            time.sleep(3)
+
+    combined_picks = "\n\n".join(all_picks_blocks)
     history = load_history()
     history.append(
         {
             "date": date_str,
             "slot": f"NHL({kickoff_str})",
-            "status": "pending" if picks_sum else "empty",
+            "status": "pending" if combined_picks else "empty",
             "event_ids": eids,
-            "picks_text": picks_sum,
+            "picks_text": combined_picks,
         }
     )
     save_history(history)
 
-    pick_count = picks_sum.count("최종 추천픽")
+    pick_count = combined_picks.count("최종 추천픽")
     if pick_count >= 2:
         time.sleep(4)
         combo_rules = (
-            "반드시 아래 NHL 조합을 적중률 최우선(1.31배 이상, -1.5 마핸 제외)으로 구성해 줘:\n"
+            "반드시 아래 NHL 통합 조합을 적중률 최우선(1.31배 이상, -1.5 마핸 제외)으로 구성해 줘:\n"
             "① NHL 최정예 주력 2폴더 (피나클 샤프 흐름 + 일반승/6.5언더 최상위 2경기)\n"
-            + ("② NHL 밸류 3폴더 (1.31배 이상 일반승·언오버 중심 3폴더)" if pick_count >= 3 else "")
+            + ("② NHL 밸류 3폴더 (1.31배 이상 일반승·+1.5플핸·언오버 중심 3폴더)" if pick_count >= 3 else "")
         )
-        combo_msg = call_gemini_combos(f"🎯 [{date_str} {kickoff_str}] NHL 1시간 전 최종 추천 조합", combo_rules, picks_sum)
+        combo_msg = call_gemini_combos(f"🎯 [{date_str} {kickoff_str}] NHL 1시간 전 최종 추천 조합", combo_rules, combined_picks)
         if combo_msg:
             send_telegram_message(combo_msg, chat_id, use_html=True)
 
@@ -1402,7 +1421,7 @@ def process_upcoming_fiba(now_kst: datetime.datetime, win_start: datetime.dateti
 
     history = load_history()
     fiba_news_kr = fetch_google_news_rss("FIBA 남자농구 월드컵 예선 로스터 부상", max_items=8)
-    fiba_news_en = fetch_en_news_rss("FIBA Basketball World Cup 2027 Qualifiers preview roster", max_items=8)
+    fiba_news_en = fetch_en_news_rss("FIBA Basketball World Cup 2027 Qualifiers European Americas preview roster", max_items=10)
 
     for ko_key in sorted(grouped_by_ko.keys()):
         ko_date, ko_hhmm = ko_key.split(" ")
@@ -1422,10 +1441,11 @@ def process_upcoming_fiba(now_kst: datetime.datetime, win_start: datetime.dateti
 
         title = f"⏰🏀 [{ko_date} {ko_hhmm} 경기] 1시간 전 FIBA 남자농구 월드컵 예선 정밀 분석"
         guide = (
-            "위 프로토 승부식 공식 배당표(남농월예)에 편성된 실제 경기만 빠짐없이 분석하세요. "
-            "각 경기마다 반드시 [일반승], [핸디캡(마핸/플핸)], [언오버] 3개 유형을 전부 상세히 평가해 주고, "
-            "그중 프로토 1.31배 이상이면서 가장 적중 확률이 높은 1개를 🌿 최종 추천픽으로 선정하세요. "
-            "(1.30배 이하 극저배당 일반승은 추천픽 금지, 핸디캡·언오버 중심 적극 활용!)"
+            "위 프로토 승부식 공식 배당표(남농월예)에 편성된 실제 경기만 빠짐없이 초정밀 분석하세요. "
+            "각 경기 분석 안에 반드시 '• 3유형 정밀 평가: [일반승] ... / [핸디캡] ... / [언오버] ...' 항목을 넣어 "
+            "일반승·핸디캡(마핸/플핸)·언오버 3가지를 전부 명확히 평가하고, NBA·유로리그 주전 차출 여부와 조별 본선 진출 동기부여·배당 변동(↑/↓)을 반영해 "
+            "프로토 1.31배 이상 중 가장 적중 확률이 높은 1개를 🌿 최종 추천픽으로 선정하세요. "
+            "(1.30배 이하 극저배당 일반승은 최종 추천픽 금지!)"
         )
         res = call_gemini_matches(title, guide, data_block)
         send_telegram_message(res, chat_id, use_html=True)
