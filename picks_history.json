@@ -631,7 +631,7 @@
   {
     "date": "2026-11-28",
     "slot": "NBA(11:00)",
-    "status": "pending",
+    "status": "graded",
     "event_ids": [
       "401909332"
     ],
