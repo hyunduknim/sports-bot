@@ -557,7 +557,7 @@
   {
     "date": "2026-11-28",
     "slot": "NHL(07:30)",
-    "status": "pending",
+    "status": "graded",
     "event_ids": [
       "401892806"
     ],
