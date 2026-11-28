@@ -589,7 +589,7 @@
   {
     "date": "2026-11-28",
     "slot": "NBA(09:30)",
-    "status": "pending",
+    "status": "graded",
     "event_ids": [
       "401909327",
       "401909328",
@@ -600,7 +600,7 @@
   {
     "date": "2026-11-28",
     "slot": "NHL(09:30)",
-    "status": "pending",
+    "status": "graded",
     "event_ids": [
       "401892807"
     ],
@@ -609,7 +609,7 @@
   {
     "date": "2026-11-28",
     "slot": "NBA(10:00)",
-    "status": "pending",
+    "status": "graded",
     "event_ids": [
       "401909330"
     ],
